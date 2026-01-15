@@ -530,7 +530,9 @@ class Renderer:
             max_depth = depth[valid_mask].max()
             if max_depth > min_depth:
                 depth_normalized = np.zeros_like(depth)
-                depth_normalized[valid_mask] = (
+                # Invert so closer objects (smaller depth) are brighter (1.0)
+                # and farther objects (larger depth) are darker (0.0)
+                depth_normalized[valid_mask] = 1.0 - (
                     depth[valid_mask] - min_depth
                 ) / (max_depth - min_depth)
                 depth = depth_normalized
