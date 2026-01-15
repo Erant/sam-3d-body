@@ -19,6 +19,16 @@ Usage:
     python tools/render_orbit.py --input output.npz --output depth_orbit.mp4 \
         --mode depth --colormap COLORMAP_INFERNO
 
+    # Depth map with skeleton overlay
+    python tools/render_orbit.py --input output.npz --output orbit.mp4 \
+        --depth-skeleton --skeleton-format coco
+
+    # Auto-framing to fill the viewport
+    python tools/render_orbit.py --input output.npz --output orbit.mp4 --auto-frame
+
+    # Manual zoom control
+    python tools/render_orbit.py --input output.npz --output orbit.mp4 --zoom 1.5
+
     # Run inference and render (requires model checkpoint)
     python tools/render_orbit.py --image photo.jpg --output orbit.mp4 \
         --checkpoint ./checkpoints/sam-3d-body-dinov3/model.ckpt \
@@ -112,7 +122,7 @@ def parse_args():
         "--mode",
         type=str,
         default="mesh",
-        choices=["mesh", "depth", "skeleton", "mesh_skeleton", "all"],
+        choices=["mesh", "depth", "skeleton", "mesh_skeleton", "depth_skeleton", "all"],
         help="Render mode (default: mesh)",
     )
     mode_group.add_argument(
@@ -124,6 +134,11 @@ def parse_args():
         "--depth",
         action="store_true",
         help="Shortcut to enable depth rendering (sets mode to depth)",
+    )
+    mode_group.add_argument(
+        "--depth-skeleton",
+        action="store_true",
+        help="Shortcut for depth with skeleton overlay (sets mode to depth_skeleton)",
     )
 
     # Skeleton options
@@ -218,6 +233,26 @@ def parse_args():
         type=float,
         default=360.0,
         help="Ending azimuth angle in degrees (default: 360.0)",
+    )
+
+    # Zoom options
+    zoom_group = parser.add_argument_group("Zoom / Framing")
+    zoom_group.add_argument(
+        "--zoom",
+        type=float,
+        default=None,
+        help="Manual zoom factor (>1 = zoom in, <1 = zoom out)",
+    )
+    zoom_group.add_argument(
+        "--auto-frame",
+        action="store_true",
+        help="Automatically compute zoom to fill viewport",
+    )
+    zoom_group.add_argument(
+        "--fill-ratio",
+        type=float,
+        default=0.8,
+        help="Target fill ratio for auto-frame (0-1, default: 0.8)",
     )
 
     # Other options
@@ -361,6 +396,8 @@ def main():
         mode = "mesh_skeleton"
     if args.depth:
         mode = "depth"
+    if args.depth_skeleton:
+        mode = "depth_skeleton"
 
     # Load or compute estimation output
     if args.input:
@@ -395,10 +432,12 @@ def main():
         print("Error: Input missing required fields (pred_vertices, pred_cam_t)")
         return 1
 
-    if mode in ["skeleton", "mesh_skeleton", "all"] and keypoints_3d is None:
+    if mode in ["skeleton", "mesh_skeleton", "depth_skeleton", "all"] and keypoints_3d is None:
         print(f"Warning: Skeleton mode requested but pred_keypoints_3d not found")
         if mode == "mesh_skeleton":
             mode = "mesh"
+        elif mode == "depth_skeleton":
+            mode = "depth"
         elif mode == "skeleton":
             print("Error: Cannot render skeleton-only without keypoints")
             return 1
@@ -441,18 +480,21 @@ def main():
         n_frames=args.n_frames,
         elevation=args.elevation,
         render_mesh=(mode in ["mesh", "mesh_skeleton", "all"]),
-        render_depth=(mode in ["depth", "all"]),
-        render_skeleton=(mode in ["skeleton", "mesh_skeleton", "all"]),
+        render_depth=(mode in ["depth", "depth_skeleton", "all"]),
+        render_skeleton=(mode in ["skeleton", "mesh_skeleton", "depth_skeleton", "all"]),
         skeleton_format=args.skeleton_format,
-        skeleton_overlay=(mode == "mesh_skeleton"),
+        skeleton_overlay=(mode in ["mesh_skeleton", "depth_skeleton"]),
         mesh_color=tuple(args.mesh_color),
         mesh_alpha=args.mesh_alpha,
         bg_color=tuple(args.bg_color),
-        depth_colormap=args.colormap if mode in ["depth", "all"] else None,
+        depth_colormap=args.colormap if mode in ["depth", "depth_skeleton", "all"] else None,
+        zoom=args.zoom,
+        auto_frame=args.auto_frame,
+        fill_ratio=args.fill_ratio,
     )
 
     # Determine which frames to save
-    if mode == "depth":
+    if mode in ["depth", "depth_skeleton"]:
         frames = result.get("depth_frames", [])
     elif mode == "skeleton" and not args.skeleton:
         frames = result.get("skeleton_frames", [])

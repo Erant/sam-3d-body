@@ -108,6 +108,82 @@ class OrbitRenderer:
             return [start_angle]
         return np.linspace(start_angle, end_angle, n_frames, endpoint=False).tolist()
 
+    def compute_auto_zoom(
+        self,
+        vertices: np.ndarray,
+        cam_t: np.ndarray,
+        fill_ratio: float = 0.8,
+    ) -> float:
+        """
+        Compute zoom factor to auto-frame the mesh in the viewport.
+
+        Args:
+            vertices: Mesh vertices of shape (V, 3).
+            cam_t: Camera translation vector.
+            fill_ratio: Target ratio of viewport to fill (0-1, default 0.8).
+
+        Returns:
+            Zoom factor to apply to vertices (>1 = zoom in, <1 = zoom out).
+        """
+        # Compute bounding box in camera space
+        verts_cam = vertices + cam_t
+
+        # Project to 2D using pinhole camera model
+        # x_2d = fx * X / Z + cx
+        # y_2d = fy * Y / Z + cy
+        z_vals = verts_cam[:, 2]
+        valid_mask = z_vals > 0.1  # Only consider points in front of camera
+
+        if not np.any(valid_mask):
+            return 1.0
+
+        x_2d = self.focal_length * verts_cam[valid_mask, 0] / z_vals[valid_mask]
+        y_2d = self.focal_length * verts_cam[valid_mask, 1] / z_vals[valid_mask]
+
+        # Compute bounding box in 2D
+        x_range = x_2d.max() - x_2d.min()
+        y_range = y_2d.max() - y_2d.min()
+
+        # Target size based on render resolution and fill ratio
+        target_x = self.render_res[0] * fill_ratio
+        target_y = self.render_res[1] * fill_ratio
+
+        # Compute zoom needed for each dimension
+        zoom_x = target_x / max(x_range, 1e-6)
+        zoom_y = target_y / max(y_range, 1e-6)
+
+        # Use minimum to ensure mesh fits in both dimensions
+        zoom = min(zoom_x, zoom_y)
+
+        return zoom
+
+    def apply_zoom(
+        self,
+        vertices: np.ndarray,
+        zoom: float,
+        center: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        """
+        Apply zoom by scaling vertices around a center point.
+
+        Args:
+            vertices: Mesh vertices of shape (V, 3).
+            zoom: Zoom factor (>1 = zoom in/larger, <1 = zoom out/smaller).
+            center: Center point to scale around. If None, uses centroid.
+
+        Returns:
+            Scaled vertices.
+        """
+        if zoom == 1.0:
+            return vertices
+
+        if center is None:
+            center = vertices.mean(axis=0)
+
+        centered = vertices - center
+        scaled = centered * zoom
+        return scaled + center
+
     def render_orbit_mesh(
         self,
         vertices: np.ndarray,
@@ -116,6 +192,9 @@ class OrbitRenderer:
         elevation: float = 0.0,
         mesh_color: Tuple[float, float, float] = (0.65, 0.74, 0.86),
         bg_color: Tuple[float, float, float] = (1.0, 1.0, 1.0),
+        zoom: Optional[float] = None,
+        auto_frame: bool = False,
+        fill_ratio: float = 0.8,
     ) -> List[np.ndarray]:
         """
         Render mesh orbit animation.
@@ -127,6 +206,9 @@ class OrbitRenderer:
             elevation: Elevation angle for X-axis tilt in degrees.
             mesh_color: RGB color for mesh (0-1 range).
             bg_color: Background color RGB (0-1 range).
+            zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
+            auto_frame: If True, automatically compute zoom to fill viewport.
+            fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
 
         Returns:
             List of RGB image arrays, each (H, W, 3) with values 0-1.
@@ -138,6 +220,12 @@ class OrbitRenderer:
 
         # Compute mesh centroid for rotation around center
         centroid = vertices.mean(axis=0)
+
+        # Apply zoom if specified
+        if auto_frame:
+            zoom = self.compute_auto_zoom(vertices, cam_t, fill_ratio)
+        if zoom is not None and zoom != 1.0:
+            vertices = self.apply_zoom(vertices, zoom, centroid)
 
         for angle in angles:
             # Create rotation matrix around Y axis (turntable)
@@ -224,6 +312,9 @@ class OrbitRenderer:
         elevation: float = 0.0,
         colormap: Optional[str] = "COLORMAP_VIRIDIS",
         normalize: bool = True,
+        zoom: Optional[float] = None,
+        auto_frame: bool = False,
+        fill_ratio: float = 0.8,
     ) -> List[np.ndarray]:
         """
         Render depth orbit animation.
@@ -235,6 +326,9 @@ class OrbitRenderer:
             elevation: Elevation angle in degrees.
             colormap: OpenCV colormap name or None for grayscale.
             normalize: Whether to normalize depth values.
+            zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
+            auto_frame: If True, automatically compute zoom to fill viewport.
+            fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
 
         Returns:
             List of depth images. If colormap is set, shape is (H, W, 3) uint8.
@@ -247,6 +341,12 @@ class OrbitRenderer:
 
         # Compute mesh centroid for rotation around center
         centroid = vertices.mean(axis=0)
+
+        # Apply zoom if specified
+        if auto_frame:
+            zoom = self.compute_auto_zoom(vertices, cam_t, fill_ratio)
+        if zoom is not None and zoom != 1.0:
+            vertices = self.apply_zoom(vertices, zoom, centroid)
 
         for angle in angles:
             # Create rotation matrix
@@ -288,6 +388,9 @@ class OrbitRenderer:
         elevation: float = 0.0,
         skeleton_format: str = "mhr70",
         bg_color: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+        zoom: Optional[float] = None,
+        auto_frame: bool = False,
+        fill_ratio: float = 0.8,
     ) -> List[np.ndarray]:
         """
         Render skeleton-only orbit animation.
@@ -299,6 +402,9 @@ class OrbitRenderer:
             elevation: Elevation angle in degrees.
             skeleton_format: Skeleton format ('mhr70', 'coco', 'openpose_body25').
             bg_color: Background color RGB (0-1 range).
+            zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
+            auto_frame: If True, automatically compute zoom to fill viewport.
+            fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
 
         Returns:
             List of RGBA image arrays, each (H, W, 4) with values 0-1.
@@ -310,6 +416,12 @@ class OrbitRenderer:
 
         # Compute keypoints centroid for rotation around center
         centroid = keypoints_3d.mean(axis=0)
+
+        # Apply zoom if specified (use keypoints as proxy for bounding box)
+        if auto_frame:
+            zoom = self.compute_auto_zoom(keypoints_3d, cam_t, fill_ratio)
+        if zoom is not None and zoom != 1.0:
+            keypoints_3d = self.apply_zoom(keypoints_3d, zoom, centroid)
 
         for angle in angles:
             # Create rotation matrix
@@ -354,6 +466,9 @@ class OrbitRenderer:
         mesh_color: Tuple[float, float, float] = (0.65, 0.74, 0.86),
         mesh_alpha: float = 0.7,
         bg_color: Tuple[float, float, float] = (1.0, 1.0, 1.0),
+        zoom: Optional[float] = None,
+        auto_frame: bool = False,
+        fill_ratio: float = 0.8,
     ) -> List[np.ndarray]:
         """
         Render mesh with skeleton overlay orbit animation.
@@ -368,6 +483,9 @@ class OrbitRenderer:
             mesh_color: RGB color for mesh (0-1 range).
             mesh_alpha: Mesh transparency (0=transparent, 1=opaque).
             bg_color: Background color RGB (0-1 range).
+            zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
+            auto_frame: If True, automatically compute zoom to fill viewport.
+            fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
 
         Returns:
             List of RGB image arrays, each (H, W, 3) with values 0-1.
@@ -379,6 +497,13 @@ class OrbitRenderer:
 
         # Use mesh centroid as rotation center (skeleton should follow mesh)
         centroid = vertices.mean(axis=0)
+
+        # Apply zoom if specified
+        if auto_frame:
+            zoom = self.compute_auto_zoom(vertices, cam_t, fill_ratio)
+        if zoom is not None and zoom != 1.0:
+            vertices = self.apply_zoom(vertices, zoom, centroid)
+            keypoints_3d = self.apply_zoom(keypoints_3d, zoom, centroid)
 
         for angle in angles:
             # Create rotation matrix
@@ -421,6 +546,113 @@ class OrbitRenderer:
 
         return frames
 
+    def render_orbit_depth_with_skeleton(
+        self,
+        vertices: np.ndarray,
+        keypoints_3d: np.ndarray,
+        cam_t: np.ndarray,
+        n_frames: int = 36,
+        elevation: float = 0.0,
+        skeleton_format: str = "mhr70",
+        colormap: Optional[str] = "COLORMAP_VIRIDIS",
+        normalize: bool = True,
+        zoom: Optional[float] = None,
+        auto_frame: bool = False,
+        fill_ratio: float = 0.8,
+    ) -> List[np.ndarray]:
+        """
+        Render depth map with skeleton overlay orbit animation.
+
+        Args:
+            vertices: Mesh vertices of shape (V, 3).
+            keypoints_3d: Joint positions of shape (N, 3).
+            cam_t: Camera translation vector.
+            n_frames: Number of frames in orbit.
+            elevation: Elevation angle in degrees.
+            skeleton_format: Skeleton format for connectivity.
+            colormap: OpenCV colormap name or None for grayscale.
+            normalize: Whether to normalize depth values.
+            zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
+            auto_frame: If True, automatically compute zoom to fill viewport.
+            fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
+
+        Returns:
+            List of RGB image arrays with depth background and skeleton overlay.
+        """
+        import trimesh
+
+        angles = self.generate_orbit_angles(n_frames)
+        frames = []
+
+        # Use mesh centroid as rotation center
+        centroid = vertices.mean(axis=0)
+
+        # Apply zoom if specified
+        if auto_frame:
+            zoom = self.compute_auto_zoom(vertices, cam_t, fill_ratio)
+        if zoom is not None and zoom != 1.0:
+            vertices = self.apply_zoom(vertices, zoom, centroid)
+            keypoints_3d = self.apply_zoom(keypoints_3d, zoom, centroid)
+
+        for angle in angles:
+            # Create rotation matrix
+            rot_y = trimesh.transformations.rotation_matrix(
+                np.radians(angle), [0, 1, 0]
+            )[:3, :3]
+
+            if elevation != 0:
+                rot_x = trimesh.transformations.rotation_matrix(
+                    np.radians(elevation), [1, 0, 0]
+                )[:3, :3]
+                rot_matrix = rot_x @ rot_y
+            else:
+                rot_matrix = rot_y
+
+            # Rotate vertices around centroid
+            centered_verts = vertices - centroid
+            rotated_verts = (rot_matrix @ centered_verts.T).T
+            final_verts = rotated_verts + centroid
+
+            # Rotate keypoints around same centroid
+            centered_kpts = keypoints_3d - centroid
+            rotated_kpts = (rot_matrix @ centered_kpts.T).T
+            final_kpts = rotated_kpts + centroid
+
+            # Render depth map
+            depth = self.mesh_renderer.render_depth(
+                final_verts,
+                cam_t=cam_t,
+                render_res=self.render_res,
+                rot_axis=[1, 0, 0],
+                rot_angle=0,
+                normalize=normalize,
+                colormap=colormap,
+            )
+
+            # Ensure depth is RGB for overlay
+            if len(depth.shape) == 2:
+                depth_rgb = np.stack([depth] * 3, axis=-1)
+            else:
+                depth_rgb = depth
+
+            # Convert to float 0-1 if needed
+            if depth_rgb.max() > 1.0:
+                depth_rgb = depth_rgb.astype(np.float32) / 255.0
+
+            # Render skeleton overlay on depth
+            frame = self.skeleton_renderer.render_skeleton_overlay(
+                depth_rgb,
+                final_kpts,
+                cam_t,
+                self.render_res,
+                skeleton_format=skeleton_format,
+                rot_axis=[1, 0, 0],
+                rot_angle=0,
+            )
+            frames.append(frame)
+
+        return frames
+
     def render_orbit(
         self,
         vertices: np.ndarray,
@@ -439,6 +671,10 @@ class OrbitRenderer:
         mesh_alpha: float = 1.0,
         bg_color: Tuple[float, float, float] = (1.0, 1.0, 1.0),
         depth_colormap: Optional[str] = "COLORMAP_VIRIDIS",
+        # Zoom
+        zoom: Optional[float] = None,
+        auto_frame: bool = False,
+        fill_ratio: float = 0.8,
         # Output
         output_path: Optional[str] = None,
         fps: int = 30,
@@ -456,12 +692,15 @@ class OrbitRenderer:
             render_depth: Whether to render depth maps.
             render_skeleton: Whether to render skeleton.
             skeleton_format: Skeleton format ('mhr70', 'coco', 'openpose_body25').
-            skeleton_overlay: If True, overlay skeleton on mesh. If False,
+            skeleton_overlay: If True, overlay skeleton on mesh/depth. If False,
                              render skeleton separately.
             mesh_color: RGB color for mesh (0-1 range).
             mesh_alpha: Mesh transparency when skeleton_overlay is True.
             bg_color: Background color RGB (0-1 range).
             depth_colormap: Colormap for depth visualization.
+            zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
+            auto_frame: If True, automatically compute zoom to fill viewport.
+            fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
             output_path: If set, save video to this path.
             fps: Frames per second for video output.
 
@@ -488,6 +727,9 @@ class OrbitRenderer:
                     mesh_color=mesh_color,
                     mesh_alpha=mesh_alpha,
                     bg_color=bg_color,
+                    zoom=zoom,
+                    auto_frame=auto_frame,
+                    fill_ratio=fill_ratio,
                 )
             else:
                 result["mesh_frames"] = self.render_orbit_mesh(
@@ -497,17 +739,38 @@ class OrbitRenderer:
                     elevation=elevation,
                     mesh_color=mesh_color,
                     bg_color=bg_color,
+                    zoom=zoom,
+                    auto_frame=auto_frame,
+                    fill_ratio=fill_ratio,
                 )
 
         # Depth rendering
         if render_depth:
-            result["depth_frames"] = self.render_orbit_depth(
-                vertices,
-                cam_t,
-                n_frames=n_frames,
-                elevation=elevation,
-                colormap=depth_colormap,
-            )
+            if render_skeleton and skeleton_overlay and keypoints_3d is not None:
+                # Depth with skeleton overlay
+                result["depth_frames"] = self.render_orbit_depth_with_skeleton(
+                    vertices,
+                    keypoints_3d,
+                    cam_t,
+                    n_frames=n_frames,
+                    elevation=elevation,
+                    skeleton_format=skeleton_format,
+                    colormap=depth_colormap,
+                    zoom=zoom,
+                    auto_frame=auto_frame,
+                    fill_ratio=fill_ratio,
+                )
+            else:
+                result["depth_frames"] = self.render_orbit_depth(
+                    vertices,
+                    cam_t,
+                    n_frames=n_frames,
+                    elevation=elevation,
+                    colormap=depth_colormap,
+                    zoom=zoom,
+                    auto_frame=auto_frame,
+                    fill_ratio=fill_ratio,
+                )
 
         # Skeleton-only rendering
         if render_skeleton and not skeleton_overlay and keypoints_3d is not None:
@@ -518,6 +781,9 @@ class OrbitRenderer:
                 elevation=elevation,
                 skeleton_format=skeleton_format,
                 bg_color=bg_color,
+                zoom=zoom,
+                auto_frame=auto_frame,
+                fill_ratio=fill_ratio,
             )
 
         # Save video if requested
@@ -691,11 +957,16 @@ class OrbitVisualization:
             output: Single person output dict containing 'pred_vertices',
                    'pred_cam_t', and optionally 'pred_keypoints_3d'.
             n_frames: Number of frames in orbit.
-            mode: Render mode - 'mesh', 'depth', 'skeleton', 'mesh_skeleton'.
+            mode: Render mode - 'mesh', 'depth', 'skeleton', 'mesh_skeleton',
+                  'depth_skeleton', or 'all'.
             skeleton_format: Skeleton format for skeleton modes.
             output_path: If set, save video to this path.
             fps: Video frame rate.
-            **kwargs: Additional arguments passed to render methods.
+            **kwargs: Additional arguments passed to render methods, including:
+                - zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out)
+                - auto_frame: If True, auto-compute zoom to fill viewport
+                - fill_ratio: Target fill ratio for auto_frame (0-1)
+                - elevation: Elevation angle in degrees
 
         Returns:
             If mode is single, returns list of frames.
@@ -761,6 +1032,22 @@ class OrbitVisualization:
                 fps=fps,
                 **kwargs,
             )
+        elif mode == "depth_skeleton":
+            if keypoints_3d is None:
+                raise ValueError("Output missing 'pred_keypoints_3d' for depth_skeleton mode")
+            return renderer.render_orbit(
+                vertices, cam_t,
+                keypoints_3d=keypoints_3d,
+                n_frames=n_frames,
+                render_mesh=False,
+                render_depth=True,
+                render_skeleton=True,
+                skeleton_overlay=True,
+                skeleton_format=skeleton_format,
+                output_path=output_path,
+                fps=fps,
+                **kwargs,
+            )
         elif mode == "all":
             return renderer.render_orbit(
                 vertices, cam_t,
@@ -778,5 +1065,5 @@ class OrbitVisualization:
         else:
             raise ValueError(
                 f"Unknown mode: {mode}. "
-                "Use 'mesh', 'depth', 'skeleton', 'mesh_skeleton', or 'all'."
+                "Use 'mesh', 'depth', 'skeleton', 'mesh_skeleton', 'depth_skeleton', or 'all'."
             )
