@@ -738,7 +738,6 @@ class OrbitRenderer:
                 depth_rgb,
                 final_kpts,
                 cam_t,
-                self.render_res,
                 skeleton_format=skeleton_format,
                 rot_axis=[1, 0, 0],
                 rot_angle=0,
