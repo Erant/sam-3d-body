@@ -521,7 +521,7 @@ class OrbitRenderer:
         cam_t: np.ndarray,
         n_frames: int = 36,
         elevation: float = 0.0,
-        colormap: Optional[str] = "COLORMAP_VIRIDIS",
+        colormap: Optional[str] = None,
         normalize: bool = True,
         zoom: Optional[float] = None,
         auto_frame: bool = False,
@@ -535,7 +535,7 @@ class OrbitRenderer:
             cam_t: Camera translation vector.
             n_frames: Number of frames in orbit.
             elevation: Elevation angle in degrees.
-            colormap: OpenCV colormap name or None for grayscale.
+            colormap: OpenCV colormap name or None for grayscale (default: None).
             normalize: Whether to normalize depth values.
             zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
             auto_frame: If True, automatically compute zoom to fill viewport.
@@ -543,7 +543,7 @@ class OrbitRenderer:
 
         Returns:
             List of depth images. If colormap is set, shape is (H, W, 3) uint8.
-            Otherwise (H, W) float32.
+            Otherwise (H, W) float32 grayscale.
         """
         import trimesh
 
@@ -777,7 +777,7 @@ class OrbitRenderer:
         n_frames: int = 36,
         elevation: float = 0.0,
         skeleton_format: str = "mhr70",
-        colormap: Optional[str] = "COLORMAP_VIRIDIS",
+        colormap: Optional[str] = None,
         normalize: bool = True,
         zoom: Optional[float] = None,
         auto_frame: bool = False,
@@ -793,7 +793,7 @@ class OrbitRenderer:
             n_frames: Number of frames in orbit.
             elevation: Elevation angle in degrees.
             skeleton_format: Skeleton format for connectivity.
-            colormap: OpenCV colormap name or None for grayscale.
+            colormap: OpenCV colormap name or None for grayscale (default: None).
             normalize: Whether to normalize depth values.
             zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
             auto_frame: If True, automatically compute zoom to fill viewport.
@@ -902,7 +902,7 @@ class OrbitRenderer:
         mesh_color: Tuple[float, float, float] = (0.65, 0.74, 0.86),
         mesh_alpha: float = 1.0,
         bg_color: Tuple[float, float, float] = (1.0, 1.0, 1.0),
-        depth_colormap: Optional[str] = "COLORMAP_VIRIDIS",
+        depth_colormap: Optional[str] = None,
         # Zoom
         zoom: Optional[float] = None,
         auto_frame: bool = False,
@@ -929,7 +929,7 @@ class OrbitRenderer:
             mesh_color: RGB color for mesh (0-1 range).
             mesh_alpha: Mesh transparency when skeleton_overlay is True.
             bg_color: Background color RGB (0-1 range).
-            depth_colormap: Colormap for depth visualization.
+            depth_colormap: Colormap for depth visualization (default: None for grayscale).
             zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
             auto_frame: If True, automatically compute zoom to fill viewport.
             fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).

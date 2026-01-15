@@ -214,8 +214,8 @@ def parse_args():
     appear_group.add_argument(
         "--colormap",
         type=str,
-        default="COLORMAP_VIRIDIS",
-        help="OpenCV colormap for depth mode (default: COLORMAP_VIRIDIS)",
+        default=None,
+        help="OpenCV colormap for depth mode (default: None for grayscale)",
     )
 
     # Animation options
