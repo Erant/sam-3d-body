@@ -459,3 +459,158 @@ class Renderer:
             if scene.has_node(node):
                 continue
             scene.add_node(node)
+
+    def render_depth(
+        self,
+        vertices: np.array,
+        cam_t: np.array,
+        render_res: List[int],
+        rot_axis: List[float] = [1, 0, 0],
+        rot_angle: float = 0,
+        normalize: bool = True,
+        colormap: Optional[str] = None,
+    ) -> np.ndarray:
+        """
+        Render depth map from mesh vertices.
+
+        Args:
+            vertices: Array of shape (V, 3) containing mesh vertices.
+            cam_t: Array of shape (3,) with camera translation.
+            render_res: [width, height] of output image.
+            rot_axis: Rotation axis for mesh transformation.
+            rot_angle: Rotation angle in degrees.
+            normalize: If True, normalize depth to 0-1 range.
+            colormap: Optional OpenCV colormap name (e.g., 'COLORMAP_VIRIDIS').
+                     If None, returns grayscale depth.
+
+        Returns:
+            Depth image as numpy array. Shape (H, W) if no colormap,
+            or (H, W, 3) if colormap is applied.
+        """
+        renderer = pyrender.OffscreenRenderer(
+            viewport_width=render_res[0], viewport_height=render_res[1], point_size=1.0
+        )
+
+        camera_translation = cam_t.copy()
+
+        mesh = self.vertices_to_trimesh(
+            vertices, camera_translation, rot_axis=rot_axis, rot_angle=rot_angle
+        )
+        mesh = pyrender.Mesh.from_trimesh(mesh)
+
+        scene = pyrender.Scene(bg_color=[0, 0, 0, 0], ambient_light=(0.3, 0.3, 0.3))
+        scene.add(mesh, "mesh")
+
+        camera_pose = np.eye(4)
+        camera_center = [render_res[0] / 2.0, render_res[1] / 2.0]
+        camera = pyrender.IntrinsicsCamera(
+            fx=self.focal_length,
+            fy=self.focal_length,
+            cx=camera_center[0],
+            cy=camera_center[1],
+            zfar=1e12,
+        )
+
+        camera_node = pyrender.Node(camera=camera, matrix=camera_pose)
+        scene.add_node(camera_node)
+
+        _, depth = renderer.render(scene)
+        renderer.delete()
+
+        # Handle invalid depth values
+        valid_mask = depth > 0
+        if not np.any(valid_mask):
+            # No valid depth, return zeros
+            if colormap:
+                return np.zeros((render_res[1], render_res[0], 3), dtype=np.uint8)
+            return np.zeros((render_res[1], render_res[0]), dtype=np.float32)
+
+        if normalize:
+            min_depth = depth[valid_mask].min()
+            max_depth = depth[valid_mask].max()
+            if max_depth > min_depth:
+                depth_normalized = np.zeros_like(depth)
+                depth_normalized[valid_mask] = (
+                    depth[valid_mask] - min_depth
+                ) / (max_depth - min_depth)
+                depth = depth_normalized
+            else:
+                depth = np.ones_like(depth) * 0.5
+                depth[~valid_mask] = 0
+
+        if colormap:
+            depth_uint8 = (depth * 255).astype(np.uint8)
+            colormap_cv = getattr(cv2, colormap, cv2.COLORMAP_VIRIDIS)
+            depth_colored = cv2.applyColorMap(depth_uint8, colormap_cv)
+            # Set background to black
+            depth_colored[~valid_mask] = 0
+            return depth_colored
+
+        return depth.astype(np.float32)
+
+    def render_rgba_with_depth(
+        self,
+        vertices: np.array,
+        cam_t: np.array,
+        render_res: List[int],
+        rot_axis: List[float] = [1, 0, 0],
+        rot_angle: float = 0,
+        mesh_base_color=(1.0, 1.0, 0.9),
+        scene_bg_color=(0, 0, 0),
+    ) -> tuple:
+        """
+        Render both RGBA color and depth in a single pass.
+
+        Args:
+            vertices: Array of shape (V, 3) containing mesh vertices.
+            cam_t: Array of shape (3,) with camera translation.
+            render_res: [width, height] of output image.
+            rot_axis: Rotation axis for mesh transformation.
+            rot_angle: Rotation angle in degrees.
+            mesh_base_color: RGB color tuple for the mesh.
+            scene_bg_color: RGB color tuple for background.
+
+        Returns:
+            Tuple of (rgba, depth) where rgba is (H, W, 4) float array
+            and depth is (H, W) float array.
+        """
+        renderer = pyrender.OffscreenRenderer(
+            viewport_width=render_res[0], viewport_height=render_res[1], point_size=1.0
+        )
+
+        camera_translation = cam_t.copy()
+
+        mesh = self.vertices_to_trimesh(
+            vertices, camera_translation, mesh_base_color, rot_axis, rot_angle
+        )
+        mesh = pyrender.Mesh.from_trimesh(mesh)
+
+        scene = pyrender.Scene(
+            bg_color=[*scene_bg_color, 0.0], ambient_light=(0.3, 0.3, 0.3)
+        )
+        scene.add(mesh, "mesh")
+
+        camera_pose = np.eye(4)
+        camera_center = [render_res[0] / 2.0, render_res[1] / 2.0]
+        camera = pyrender.IntrinsicsCamera(
+            fx=self.focal_length,
+            fy=self.focal_length,
+            cx=camera_center[0],
+            cy=camera_center[1],
+            zfar=1e12,
+        )
+
+        camera_node = pyrender.Node(camera=camera, matrix=camera_pose)
+        scene.add_node(camera_node)
+        self.add_point_lighting(scene, camera_node)
+        self.add_lighting(scene, camera_node)
+
+        light_nodes = create_raymond_lights()
+        for node in light_nodes:
+            scene.add_node(node)
+
+        color, depth = renderer.render(scene, flags=pyrender.RenderFlags.RGBA)
+        color = color.astype(np.float32) / 255.0
+        renderer.delete()
+
+        return color, depth
