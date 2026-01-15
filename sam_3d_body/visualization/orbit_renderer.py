@@ -108,6 +108,76 @@ class OrbitRenderer:
             return [start_angle]
         return np.linspace(start_angle, end_angle, n_frames, endpoint=False).tolist()
 
+    def compute_auto_framing(
+        self,
+        vertices: np.ndarray,
+        cam_t: np.ndarray,
+        fill_ratio: float = 0.8,
+    ) -> Tuple[float, np.ndarray]:
+        """
+        Compute zoom and centering offset to auto-frame the mesh in the viewport.
+
+        Args:
+            vertices: Mesh vertices of shape (V, 3).
+            cam_t: Camera translation vector.
+            fill_ratio: Target ratio of viewport to fill (0-1, default 0.8).
+
+        Returns:
+            Tuple of (zoom_factor, center_offset_3d) where:
+            - zoom_factor: Scale to apply to vertices (>1 = zoom in)
+            - center_offset_3d: 3D offset to add to vertices to center in viewport
+        """
+        # Compute bounding box in camera space
+        verts_cam = vertices + cam_t
+
+        # Project to 2D using pinhole camera model
+        # x_2d = fx * X / Z (relative to principal point)
+        # y_2d = fy * Y / Z (relative to principal point)
+        z_vals = verts_cam[:, 2]
+        valid_mask = z_vals > 0.1  # Only consider points in front of camera
+
+        if not np.any(valid_mask):
+            return 1.0, np.zeros(3)
+
+        x_2d = self.focal_length * verts_cam[valid_mask, 0] / z_vals[valid_mask]
+        y_2d = self.focal_length * verts_cam[valid_mask, 1] / z_vals[valid_mask]
+
+        # Compute bounding box center in 2D (relative to principal point)
+        bbox_center_x = (x_2d.min() + x_2d.max()) / 2
+        bbox_center_y = (y_2d.min() + y_2d.max()) / 2
+
+        # Compute bounding box size in 2D
+        x_range = x_2d.max() - x_2d.min()
+        y_range = y_2d.max() - y_2d.min()
+
+        # Target size based on render resolution and fill ratio
+        target_x = self.render_res[0] * fill_ratio
+        target_y = self.render_res[1] * fill_ratio
+
+        # Compute zoom needed for each dimension
+        zoom_x = target_x / max(x_range, 1e-6)
+        zoom_y = target_y / max(y_range, 1e-6)
+
+        # Use minimum to ensure mesh fits in both dimensions
+        zoom = min(zoom_x, zoom_y)
+
+        # Compute 3D offset to center the mesh
+        # We need to shift X and Y so bbox center projects to (0, 0)
+        # At the centroid's depth, convert 2D offset to 3D offset
+        centroid = vertices.mean(axis=0)
+        centroid_cam = centroid + cam_t
+        centroid_z = centroid_cam[2]
+
+        if centroid_z > 0.1:
+            # Convert 2D offset (in pixels) back to 3D offset at centroid depth
+            offset_x = -bbox_center_x * centroid_z / self.focal_length
+            offset_y = -bbox_center_y * centroid_z / self.focal_length
+            center_offset = np.array([offset_x, offset_y, 0.0])
+        else:
+            center_offset = np.zeros(3)
+
+        return zoom, center_offset
+
     def compute_auto_zoom(
         self,
         vertices: np.ndarray,
@@ -125,36 +195,7 @@ class OrbitRenderer:
         Returns:
             Zoom factor to apply to vertices (>1 = zoom in, <1 = zoom out).
         """
-        # Compute bounding box in camera space
-        verts_cam = vertices + cam_t
-
-        # Project to 2D using pinhole camera model
-        # x_2d = fx * X / Z + cx
-        # y_2d = fy * Y / Z + cy
-        z_vals = verts_cam[:, 2]
-        valid_mask = z_vals > 0.1  # Only consider points in front of camera
-
-        if not np.any(valid_mask):
-            return 1.0
-
-        x_2d = self.focal_length * verts_cam[valid_mask, 0] / z_vals[valid_mask]
-        y_2d = self.focal_length * verts_cam[valid_mask, 1] / z_vals[valid_mask]
-
-        # Compute bounding box in 2D
-        x_range = x_2d.max() - x_2d.min()
-        y_range = y_2d.max() - y_2d.min()
-
-        # Target size based on render resolution and fill ratio
-        target_x = self.render_res[0] * fill_ratio
-        target_y = self.render_res[1] * fill_ratio
-
-        # Compute zoom needed for each dimension
-        zoom_x = target_x / max(x_range, 1e-6)
-        zoom_y = target_y / max(y_range, 1e-6)
-
-        # Use minimum to ensure mesh fits in both dimensions
-        zoom = min(zoom_x, zoom_y)
-
+        zoom, _ = self.compute_auto_framing(vertices, cam_t, fill_ratio)
         return zoom
 
     def apply_zoom(
@@ -183,6 +224,36 @@ class OrbitRenderer:
         centered = vertices - center
         scaled = centered * zoom
         return scaled + center
+
+    def apply_auto_framing(
+        self,
+        vertices: np.ndarray,
+        cam_t: np.ndarray,
+        fill_ratio: float = 0.8,
+    ) -> np.ndarray:
+        """
+        Apply both zoom and centering to auto-frame mesh in viewport.
+
+        Args:
+            vertices: Mesh vertices of shape (V, 3).
+            cam_t: Camera translation vector.
+            fill_ratio: Target ratio of viewport to fill (0-1, default 0.8).
+
+        Returns:
+            Transformed vertices that will be centered and scaled in viewport.
+        """
+        zoom, center_offset = self.compute_auto_framing(vertices, cam_t, fill_ratio)
+        centroid = vertices.mean(axis=0)
+
+        # First apply centering offset
+        centered_verts = vertices + center_offset
+
+        # Then apply zoom around the new centroid
+        new_centroid = centroid + center_offset
+        if zoom != 1.0:
+            centered_verts = self.apply_zoom(centered_verts, zoom, new_centroid)
+
+        return centered_verts
 
     def render_orbit_mesh(
         self,
@@ -218,14 +289,15 @@ class OrbitRenderer:
         angles = self.generate_orbit_angles(n_frames)
         frames = []
 
-        # Compute mesh centroid for rotation around center
-        centroid = vertices.mean(axis=0)
-
-        # Apply zoom if specified
+        # Apply auto-framing (zoom + centering) or manual zoom
         if auto_frame:
-            zoom = self.compute_auto_zoom(vertices, cam_t, fill_ratio)
-        if zoom is not None and zoom != 1.0:
+            vertices = self.apply_auto_framing(vertices, cam_t, fill_ratio)
+        elif zoom is not None and zoom != 1.0:
+            centroid = vertices.mean(axis=0)
             vertices = self.apply_zoom(vertices, zoom, centroid)
+
+        # Compute mesh centroid for rotation around center (after framing)
+        centroid = vertices.mean(axis=0)
 
         for angle in angles:
             # Create rotation matrix around Y axis (turntable)
@@ -339,14 +411,15 @@ class OrbitRenderer:
         angles = self.generate_orbit_angles(n_frames)
         frames = []
 
-        # Compute mesh centroid for rotation around center
-        centroid = vertices.mean(axis=0)
-
-        # Apply zoom if specified
+        # Apply auto-framing (zoom + centering) or manual zoom
         if auto_frame:
-            zoom = self.compute_auto_zoom(vertices, cam_t, fill_ratio)
-        if zoom is not None and zoom != 1.0:
+            vertices = self.apply_auto_framing(vertices, cam_t, fill_ratio)
+        elif zoom is not None and zoom != 1.0:
+            centroid = vertices.mean(axis=0)
             vertices = self.apply_zoom(vertices, zoom, centroid)
+
+        # Compute mesh centroid for rotation around center (after framing)
+        centroid = vertices.mean(axis=0)
 
         for angle in angles:
             # Create rotation matrix
@@ -414,14 +487,15 @@ class OrbitRenderer:
         angles = self.generate_orbit_angles(n_frames)
         frames = []
 
-        # Compute keypoints centroid for rotation around center
-        centroid = keypoints_3d.mean(axis=0)
-
-        # Apply zoom if specified (use keypoints as proxy for bounding box)
+        # Apply auto-framing (zoom + centering) or manual zoom
         if auto_frame:
-            zoom = self.compute_auto_zoom(keypoints_3d, cam_t, fill_ratio)
-        if zoom is not None and zoom != 1.0:
+            keypoints_3d = self.apply_auto_framing(keypoints_3d, cam_t, fill_ratio)
+        elif zoom is not None and zoom != 1.0:
+            centroid = keypoints_3d.mean(axis=0)
             keypoints_3d = self.apply_zoom(keypoints_3d, zoom, centroid)
+
+        # Compute keypoints centroid for rotation around center (after framing)
+        centroid = keypoints_3d.mean(axis=0)
 
         for angle in angles:
             # Create rotation matrix
@@ -495,15 +569,25 @@ class OrbitRenderer:
         angles = self.generate_orbit_angles(n_frames)
         frames = []
 
-        # Use mesh centroid as rotation center (skeleton should follow mesh)
-        centroid = vertices.mean(axis=0)
-
-        # Apply zoom if specified
+        # Apply auto-framing (zoom + centering) or manual zoom
         if auto_frame:
-            zoom = self.compute_auto_zoom(vertices, cam_t, fill_ratio)
-        if zoom is not None and zoom != 1.0:
+            # Compute framing based on mesh vertices
+            zoom, center_offset = self.compute_auto_framing(vertices, cam_t, fill_ratio)
+            centroid = vertices.mean(axis=0)
+            # Apply to both vertices and keypoints
+            vertices = vertices + center_offset
+            keypoints_3d = keypoints_3d + center_offset
+            new_centroid = centroid + center_offset
+            if zoom != 1.0:
+                vertices = self.apply_zoom(vertices, zoom, new_centroid)
+                keypoints_3d = self.apply_zoom(keypoints_3d, zoom, new_centroid)
+        elif zoom is not None and zoom != 1.0:
+            centroid = vertices.mean(axis=0)
             vertices = self.apply_zoom(vertices, zoom, centroid)
             keypoints_3d = self.apply_zoom(keypoints_3d, zoom, centroid)
+
+        # Use mesh centroid as rotation center (after framing)
+        centroid = vertices.mean(axis=0)
 
         for angle in angles:
             # Create rotation matrix
@@ -584,15 +668,25 @@ class OrbitRenderer:
         angles = self.generate_orbit_angles(n_frames)
         frames = []
 
-        # Use mesh centroid as rotation center
-        centroid = vertices.mean(axis=0)
-
-        # Apply zoom if specified
+        # Apply auto-framing (zoom + centering) or manual zoom
         if auto_frame:
-            zoom = self.compute_auto_zoom(vertices, cam_t, fill_ratio)
-        if zoom is not None and zoom != 1.0:
+            # Compute framing based on mesh vertices
+            zoom, center_offset = self.compute_auto_framing(vertices, cam_t, fill_ratio)
+            centroid = vertices.mean(axis=0)
+            # Apply to both vertices and keypoints
+            vertices = vertices + center_offset
+            keypoints_3d = keypoints_3d + center_offset
+            new_centroid = centroid + center_offset
+            if zoom != 1.0:
+                vertices = self.apply_zoom(vertices, zoom, new_centroid)
+                keypoints_3d = self.apply_zoom(keypoints_3d, zoom, new_centroid)
+        elif zoom is not None and zoom != 1.0:
+            centroid = vertices.mean(axis=0)
             vertices = self.apply_zoom(vertices, zoom, centroid)
             keypoints_3d = self.apply_zoom(keypoints_3d, zoom, centroid)
+
+        # Use mesh centroid as rotation center (after framing)
+        centroid = vertices.mean(axis=0)
 
         for angle in angles:
             # Create rotation matrix
