@@ -85,6 +85,42 @@ class OrbitRenderer:
             render_res=render_res,
         )
 
+    @classmethod
+    def from_output(
+        cls,
+        output: dict,
+        faces: np.ndarray,
+        render_res: List[int] = [512, 512],
+        use_original_focal_length: bool = True,
+    ) -> "OrbitRenderer":
+        """
+        Create OrbitRenderer from SAM-3D-Body estimation output.
+
+        This factory method extracts camera parameters from the estimation
+        output, allowing frame 0 to match the original image viewpoint.
+
+        Args:
+            output: Single person output dict from estimator containing
+                   'focal_length', 'pred_cam_t', 'pred_vertices', etc.
+            faces: Mesh faces array from estimator.
+            render_res: [width, height] of output renders.
+            use_original_focal_length: If True, use focal_length from output.
+                                      If False, use default 5000.0.
+
+        Returns:
+            Configured OrbitRenderer instance with matching camera params.
+        """
+        if use_original_focal_length and "focal_length" in output:
+            fl = float(output["focal_length"])
+        else:
+            fl = 5000.0
+
+        return cls(
+            focal_length=fl,
+            faces=faces,
+            render_res=render_res,
+        )
+
     def generate_orbit_angles(
         self,
         n_frames: int = 36,
@@ -107,6 +143,102 @@ class OrbitRenderer:
         if n_frames == 1:
             return [start_angle]
         return np.linspace(start_angle, end_angle, n_frames, endpoint=False).tolist()
+
+    def compute_original_framing(
+        self,
+        vertices: np.ndarray,
+        cam_t: np.ndarray,
+        bbox: np.ndarray,
+        original_focal_length: float,
+    ) -> Tuple[float, np.ndarray]:
+        """
+        Compute framing parameters to match the original image viewpoint.
+
+        When the estimator processes an image, it uses a crop (bbox) and
+        computes camera parameters relative to that crop. This method
+        computes the zoom and offset needed to match that original framing
+        when rendering at a potentially different resolution.
+
+        Args:
+            vertices: Mesh vertices of shape (V, 3).
+            cam_t: Camera translation from estimation output.
+            bbox: Bounding box [x1, y1, x2, y2] from estimation output.
+            original_focal_length: Focal length from estimation output.
+
+        Returns:
+            Tuple of (zoom_factor, center_offset_3d) to apply for matching
+            the original framing. Returns (1.0, zeros) if no adjustment needed.
+        """
+        # The bbox defines the crop region used for estimation
+        # The focal length is scaled relative to this crop
+        bbox_width = bbox[2] - bbox[0]
+        bbox_height = bbox[3] - bbox[1]
+
+        # Aspect ratio of original crop vs render resolution
+        render_width, render_height = self.render_res
+        bbox_aspect = bbox_width / max(bbox_height, 1e-6)
+        render_aspect = render_width / max(render_height, 1e-6)
+
+        # The estimation focal length is relative to the bbox crop
+        # We need to scale based on the ratio of render size to bbox size
+        # to maintain the same field of view
+
+        # If rendering at different resolution, compute scale factor
+        # The focal length scales with image size
+        if abs(self.focal_length - original_focal_length) < 1e-6:
+            # Using same focal length - scale based on resolution difference
+            # to maintain the same FOV relative to the crop
+            scale_x = render_width / max(bbox_width, 1e-6)
+            scale_y = render_height / max(bbox_height, 1e-6)
+            # Use minimum to fit within render resolution
+            zoom = min(scale_x, scale_y)
+        else:
+            # Different focal length - compute based on FOV difference
+            # FOV ~ 2 * atan(size / (2 * focal_length))
+            # To maintain same apparent size: new_focal / new_size = old_focal / old_size
+            zoom = (self.focal_length / original_focal_length) * min(
+                render_width / max(bbox_width, 1e-6),
+                render_height / max(bbox_height, 1e-6)
+            )
+
+        # No centering offset needed - cam_t already positions correctly
+        # The mesh should already be centered based on the original estimation
+        center_offset = np.zeros(3)
+
+        return zoom, center_offset
+
+    def apply_original_framing(
+        self,
+        vertices: np.ndarray,
+        cam_t: np.ndarray,
+        bbox: np.ndarray,
+        original_focal_length: float,
+    ) -> np.ndarray:
+        """
+        Apply framing transformation to match original image viewpoint.
+
+        Args:
+            vertices: Mesh vertices of shape (V, 3).
+            cam_t: Camera translation from estimation output.
+            bbox: Bounding box from estimation output.
+            original_focal_length: Focal length from estimation output.
+
+        Returns:
+            Transformed vertices that will match the original image framing.
+        """
+        zoom, center_offset = self.compute_original_framing(
+            vertices, cam_t, bbox, original_focal_length
+        )
+
+        # Apply centering offset first
+        transformed = vertices + center_offset
+
+        # Apply zoom around bounding box center
+        if zoom != 1.0:
+            bbox_center = (transformed.min(axis=0) + transformed.max(axis=0)) / 2
+            transformed = self.apply_zoom(transformed, zoom, bbox_center)
+
+        return transformed
 
     def compute_auto_framing(
         self,
