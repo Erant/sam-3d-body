@@ -163,15 +163,18 @@ class OrbitRenderer:
 
         # Compute 3D offset to center the mesh
         # We need to shift X and Y so bbox center projects to (0, 0)
-        # At the centroid's depth, convert 2D offset to 3D offset
-        centroid = vertices.mean(axis=0)
-        centroid_cam = centroid + cam_t
-        centroid_z = centroid_cam[2]
+        # Use 3D bounding box center (not vertex centroid) for reference depth
+        # This gives better visual centering as bbox center matches visual center
+        bbox_min = vertices.min(axis=0)
+        bbox_max = vertices.max(axis=0)
+        bbox_center_3d = (bbox_min + bbox_max) / 2
+        bbox_center_cam = bbox_center_3d + cam_t
+        reference_z = bbox_center_cam[2]
 
-        if centroid_z > 0.1:
-            # Convert 2D offset (in pixels) back to 3D offset at centroid depth
-            offset_x = -bbox_center_x * centroid_z / self.focal_length
-            offset_y = -bbox_center_y * centroid_z / self.focal_length
+        if reference_z > 0.1:
+            # Convert 2D offset (in pixels) back to 3D offset at bounding box center depth
+            offset_x = -bbox_center_x * reference_z / self.focal_length
+            offset_y = -bbox_center_y * reference_z / self.focal_length
             center_offset = np.array([offset_x, offset_y, 0.0])
         else:
             center_offset = np.zeros(3)
@@ -243,15 +246,19 @@ class OrbitRenderer:
             Transformed vertices that will be centered and scaled in viewport.
         """
         zoom, center_offset = self.compute_auto_framing(vertices, cam_t, fill_ratio)
-        centroid = vertices.mean(axis=0)
+
+        # Use 3D bounding box center (matches visual center better than vertex centroid)
+        bbox_min = vertices.min(axis=0)
+        bbox_max = vertices.max(axis=0)
+        bbox_center = (bbox_min + bbox_max) / 2
 
         # First apply centering offset
         centered_verts = vertices + center_offset
 
-        # Then apply zoom around the new centroid
-        new_centroid = centroid + center_offset
+        # Then apply zoom around the new bbox center
+        new_bbox_center = bbox_center + center_offset
         if zoom != 1.0:
-            centered_verts = self.apply_zoom(centered_verts, zoom, new_centroid)
+            centered_verts = self.apply_zoom(centered_verts, zoom, new_bbox_center)
 
         return centered_verts
 
@@ -293,11 +300,11 @@ class OrbitRenderer:
         if auto_frame:
             vertices = self.apply_auto_framing(vertices, cam_t, fill_ratio)
         elif zoom is not None and zoom != 1.0:
-            centroid = vertices.mean(axis=0)
-            vertices = self.apply_zoom(vertices, zoom, centroid)
+            bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
+            vertices = self.apply_zoom(vertices, zoom, bbox_center)
 
-        # Compute mesh centroid for rotation around center (after framing)
-        centroid = vertices.mean(axis=0)
+        # Use bounding box center for rotation (matches visual center)
+        rotation_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
 
         for angle in angles:
             # Create rotation matrix around Y axis (turntable)
@@ -314,13 +321,13 @@ class OrbitRenderer:
             else:
                 rot_matrix = rot_y
 
-            # Rotate vertices around centroid:
-            # 1. Translate to origin (subtract centroid)
+            # Rotate vertices around bbox center:
+            # 1. Translate to origin (subtract rotation_center)
             # 2. Apply rotation
-            # 3. Translate back (add centroid)
-            centered_verts = vertices - centroid
+            # 3. Translate back (add rotation_center)
+            centered_verts = vertices - rotation_center
             rotated_verts = (rot_matrix @ centered_verts.T).T
-            final_verts = rotated_verts + centroid
+            final_verts = rotated_verts + rotation_center
 
             # Render with pre-rotated vertices (no additional rotation)
             frame = self.mesh_renderer.render_rgba(
@@ -349,8 +356,8 @@ class OrbitRenderer:
         """Render with combined azimuth and elevation rotation."""
         import trimesh
 
-        # Compute mesh centroid
-        centroid = vertices.mean(axis=0)
+        # Use bounding box center for rotation (matches visual center)
+        rotation_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
 
         # Create combined rotation matrix
         rot_y = trimesh.transformations.rotation_matrix(
@@ -361,10 +368,10 @@ class OrbitRenderer:
         )[:3, :3]
         rot_matrix = rot_x @ rot_y
 
-        # Rotate around centroid
-        centered_verts = vertices - centroid
+        # Rotate around bbox center
+        centered_verts = vertices - rotation_center
         rotated_verts = (rot_matrix @ centered_verts.T).T
-        final_verts = rotated_verts + centroid
+        final_verts = rotated_verts + rotation_center
 
         return self.mesh_renderer.render_rgba(
             final_verts,
@@ -415,11 +422,11 @@ class OrbitRenderer:
         if auto_frame:
             vertices = self.apply_auto_framing(vertices, cam_t, fill_ratio)
         elif zoom is not None and zoom != 1.0:
-            centroid = vertices.mean(axis=0)
-            vertices = self.apply_zoom(vertices, zoom, centroid)
+            bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
+            vertices = self.apply_zoom(vertices, zoom, bbox_center)
 
-        # Compute mesh centroid for rotation around center (after framing)
-        centroid = vertices.mean(axis=0)
+        # Use bounding box center for rotation (matches visual center)
+        rotation_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
 
         for angle in angles:
             # Create rotation matrix
@@ -435,10 +442,10 @@ class OrbitRenderer:
             else:
                 rot_matrix = rot_y
 
-            # Rotate vertices around centroid
-            centered_verts = vertices - centroid
+            # Rotate vertices around bbox center
+            centered_verts = vertices - rotation_center
             rotated_verts = (rot_matrix @ centered_verts.T).T
-            final_verts = rotated_verts + centroid
+            final_verts = rotated_verts + rotation_center
 
             depth = self.mesh_renderer.render_depth(
                 final_verts,
@@ -491,11 +498,11 @@ class OrbitRenderer:
         if auto_frame:
             keypoints_3d = self.apply_auto_framing(keypoints_3d, cam_t, fill_ratio)
         elif zoom is not None and zoom != 1.0:
-            centroid = keypoints_3d.mean(axis=0)
-            keypoints_3d = self.apply_zoom(keypoints_3d, zoom, centroid)
+            bbox_center = (keypoints_3d.min(axis=0) + keypoints_3d.max(axis=0)) / 2
+            keypoints_3d = self.apply_zoom(keypoints_3d, zoom, bbox_center)
 
-        # Compute keypoints centroid for rotation around center (after framing)
-        centroid = keypoints_3d.mean(axis=0)
+        # Use bounding box center for rotation (matches visual center)
+        rotation_center = (keypoints_3d.min(axis=0) + keypoints_3d.max(axis=0)) / 2
 
         for angle in angles:
             # Create rotation matrix
@@ -511,10 +518,10 @@ class OrbitRenderer:
             else:
                 rot_matrix = rot_y
 
-            # Rotate keypoints around centroid
-            centered_kpts = keypoints_3d - centroid
+            # Rotate keypoints around bbox center
+            centered_kpts = keypoints_3d - rotation_center
             rotated_kpts = (rot_matrix @ centered_kpts.T).T
-            final_kpts = rotated_kpts + centroid
+            final_kpts = rotated_kpts + rotation_center
 
             frame = self.skeleton_renderer.render_skeleton(
                 final_kpts,
@@ -572,22 +579,22 @@ class OrbitRenderer:
         # Apply auto-framing (zoom + centering) or manual zoom
         if auto_frame:
             # Compute framing based on mesh vertices
-            zoom, center_offset = self.compute_auto_framing(vertices, cam_t, fill_ratio)
-            centroid = vertices.mean(axis=0)
+            zoom_factor, center_offset = self.compute_auto_framing(vertices, cam_t, fill_ratio)
+            bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
             # Apply to both vertices and keypoints
             vertices = vertices + center_offset
             keypoints_3d = keypoints_3d + center_offset
-            new_centroid = centroid + center_offset
-            if zoom != 1.0:
-                vertices = self.apply_zoom(vertices, zoom, new_centroid)
-                keypoints_3d = self.apply_zoom(keypoints_3d, zoom, new_centroid)
+            new_bbox_center = bbox_center + center_offset
+            if zoom_factor != 1.0:
+                vertices = self.apply_zoom(vertices, zoom_factor, new_bbox_center)
+                keypoints_3d = self.apply_zoom(keypoints_3d, zoom_factor, new_bbox_center)
         elif zoom is not None and zoom != 1.0:
-            centroid = vertices.mean(axis=0)
-            vertices = self.apply_zoom(vertices, zoom, centroid)
-            keypoints_3d = self.apply_zoom(keypoints_3d, zoom, centroid)
+            bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
+            vertices = self.apply_zoom(vertices, zoom, bbox_center)
+            keypoints_3d = self.apply_zoom(keypoints_3d, zoom, bbox_center)
 
-        # Use mesh centroid as rotation center (after framing)
-        centroid = vertices.mean(axis=0)
+        # Use bounding box center for rotation (matches visual center)
+        rotation_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
 
         for angle in angles:
             # Create rotation matrix
@@ -603,15 +610,15 @@ class OrbitRenderer:
             else:
                 rot_matrix = rot_y
 
-            # Rotate vertices around centroid
-            centered_verts = vertices - centroid
+            # Rotate vertices around bbox center
+            centered_verts = vertices - rotation_center
             rotated_verts = (rot_matrix @ centered_verts.T).T
-            final_verts = rotated_verts + centroid
+            final_verts = rotated_verts + rotation_center
 
-            # Rotate keypoints around same centroid
-            centered_kpts = keypoints_3d - centroid
+            # Rotate keypoints around same bbox center
+            centered_kpts = keypoints_3d - rotation_center
             rotated_kpts = (rot_matrix @ centered_kpts.T).T
-            final_kpts = rotated_kpts + centroid
+            final_kpts = rotated_kpts + rotation_center
 
             frame = self.skeleton_renderer.render_mesh_with_skeleton(
                 final_verts,
@@ -671,22 +678,22 @@ class OrbitRenderer:
         # Apply auto-framing (zoom + centering) or manual zoom
         if auto_frame:
             # Compute framing based on mesh vertices
-            zoom, center_offset = self.compute_auto_framing(vertices, cam_t, fill_ratio)
-            centroid = vertices.mean(axis=0)
+            zoom_factor, center_offset = self.compute_auto_framing(vertices, cam_t, fill_ratio)
+            bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
             # Apply to both vertices and keypoints
             vertices = vertices + center_offset
             keypoints_3d = keypoints_3d + center_offset
-            new_centroid = centroid + center_offset
-            if zoom != 1.0:
-                vertices = self.apply_zoom(vertices, zoom, new_centroid)
-                keypoints_3d = self.apply_zoom(keypoints_3d, zoom, new_centroid)
+            new_bbox_center = bbox_center + center_offset
+            if zoom_factor != 1.0:
+                vertices = self.apply_zoom(vertices, zoom_factor, new_bbox_center)
+                keypoints_3d = self.apply_zoom(keypoints_3d, zoom_factor, new_bbox_center)
         elif zoom is not None and zoom != 1.0:
-            centroid = vertices.mean(axis=0)
-            vertices = self.apply_zoom(vertices, zoom, centroid)
-            keypoints_3d = self.apply_zoom(keypoints_3d, zoom, centroid)
+            bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
+            vertices = self.apply_zoom(vertices, zoom, bbox_center)
+            keypoints_3d = self.apply_zoom(keypoints_3d, zoom, bbox_center)
 
-        # Use mesh centroid as rotation center (after framing)
-        centroid = vertices.mean(axis=0)
+        # Use bounding box center for rotation (matches visual center)
+        rotation_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
 
         for angle in angles:
             # Create rotation matrix
@@ -702,15 +709,15 @@ class OrbitRenderer:
             else:
                 rot_matrix = rot_y
 
-            # Rotate vertices around centroid
-            centered_verts = vertices - centroid
+            # Rotate vertices around bbox center
+            centered_verts = vertices - rotation_center
             rotated_verts = (rot_matrix @ centered_verts.T).T
-            final_verts = rotated_verts + centroid
+            final_verts = rotated_verts + rotation_center
 
-            # Rotate keypoints around same centroid
-            centered_kpts = keypoints_3d - centroid
+            # Rotate keypoints around same bbox center
+            centered_kpts = keypoints_3d - rotation_center
             rotated_kpts = (rot_matrix @ centered_kpts.T).T
-            final_kpts = rotated_kpts + centroid
+            final_kpts = rotated_kpts + rotation_center
 
             # Render depth map
             depth = self.mesh_renderer.render_depth(
@@ -982,7 +989,7 @@ class OrbitRenderer:
         """
         Compute camera intrinsics and extrinsics for each frame of an orbit.
 
-        The coordinate system places the mesh centroid at world origin.
+        The coordinate system places the mesh bounding box center at world origin.
         Camera poses are computed as camera-to-world (c2w) transformations.
 
         Args:
@@ -1013,11 +1020,11 @@ class OrbitRenderer:
         if auto_frame:
             vertices = self.apply_auto_framing(vertices, cam_t, fill_ratio)
         elif zoom is not None and zoom != 1.0:
-            centroid = vertices.mean(axis=0)
-            vertices = self.apply_zoom(vertices, zoom, centroid)
+            bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
+            vertices = self.apply_zoom(vertices, zoom, bbox_center)
 
-        # World origin is at mesh centroid
-        centroid = vertices.mean(axis=0)
+        # World origin is at mesh bounding box center (matches visual center)
+        world_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
 
         # Intrinsics
         width, height = self.render_res
@@ -1089,7 +1096,7 @@ class OrbitRenderer:
         return {
             "intrinsics": intrinsics,
             "frames": frames,
-            "world_centroid": centroid.tolist(),
+            "world_centroid": world_center.tolist(),
         }
 
     def _rotation_to_quaternion(self, R: np.ndarray) -> np.ndarray:
