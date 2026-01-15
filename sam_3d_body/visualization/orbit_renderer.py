@@ -131,29 +131,47 @@ class OrbitRenderer:
         Returns:
             List of RGB image arrays, each (H, W, 3) with values 0-1.
         """
+        import trimesh
+
         angles = self.generate_orbit_angles(n_frames)
         frames = []
 
+        # Compute mesh centroid for rotation around center
+        centroid = vertices.mean(axis=0)
+
         for angle in angles:
-            # Combine elevation (X rotation) with azimuth (Y rotation)
-            # First apply Y rotation (turntable), then X tilt
+            # Create rotation matrix around Y axis (turntable)
+            rot_y = trimesh.transformations.rotation_matrix(
+                np.radians(angle), [0, 1, 0]
+            )[:3, :3]
+
+            # Apply elevation if specified
+            if elevation != 0:
+                rot_x = trimesh.transformations.rotation_matrix(
+                    np.radians(elevation), [1, 0, 0]
+                )[:3, :3]
+                rot_matrix = rot_x @ rot_y
+            else:
+                rot_matrix = rot_y
+
+            # Rotate vertices around centroid:
+            # 1. Translate to origin (subtract centroid)
+            # 2. Apply rotation
+            # 3. Translate back (add centroid)
+            centered_verts = vertices - centroid
+            rotated_verts = (rot_matrix @ centered_verts.T).T
+            final_verts = rotated_verts + centroid
+
+            # Render with pre-rotated vertices (no additional rotation)
             frame = self.mesh_renderer.render_rgba(
-                vertices,
+                final_verts,
                 cam_t=cam_t,
-                rot_axis=[0, 1, 0],
-                rot_angle=angle,
+                rot_axis=[1, 0, 0],
+                rot_angle=0,  # No rotation - already applied
                 mesh_base_color=mesh_color,
                 scene_bg_color=bg_color,
                 render_res=self.render_res,
             )
-
-            # Apply elevation if specified
-            if elevation != 0:
-                # Re-render with combined rotation
-                # For simplicity, we do a second pass with X rotation
-                frame = self._render_with_combined_rotation(
-                    vertices, cam_t, angle, elevation, mesh_color, bg_color
-                )
 
             frames.append(frame[:, :, :3])
 
@@ -171,23 +189,28 @@ class OrbitRenderer:
         """Render with combined azimuth and elevation rotation."""
         import trimesh
 
+        # Compute mesh centroid
+        centroid = vertices.mean(axis=0)
+
         # Create combined rotation matrix
         rot_y = trimesh.transformations.rotation_matrix(
             np.radians(azimuth), [0, 1, 0]
-        )
+        )[:3, :3]
         rot_x = trimesh.transformations.rotation_matrix(
             np.radians(elevation), [1, 0, 0]
-        )
-        combined = rot_x @ rot_y
+        )[:3, :3]
+        rot_matrix = rot_x @ rot_y
 
-        # Extract axis-angle from combined rotation
-        axis, angle = trimesh.transformations.rotation_from_matrix(combined)
+        # Rotate around centroid
+        centered_verts = vertices - centroid
+        rotated_verts = (rot_matrix @ centered_verts.T).T
+        final_verts = rotated_verts + centroid
 
         return self.mesh_renderer.render_rgba(
-            vertices,
+            final_verts,
             cam_t=cam_t,
-            rot_axis=axis.tolist(),
-            rot_angle=np.degrees(angle),
+            rot_axis=[1, 0, 0],
+            rot_angle=0,
             mesh_base_color=mesh_color,
             scene_bg_color=bg_color,
             render_res=self.render_res,
@@ -217,16 +240,39 @@ class OrbitRenderer:
             List of depth images. If colormap is set, shape is (H, W, 3) uint8.
             Otherwise (H, W) float32.
         """
+        import trimesh
+
         angles = self.generate_orbit_angles(n_frames)
         frames = []
 
+        # Compute mesh centroid for rotation around center
+        centroid = vertices.mean(axis=0)
+
         for angle in angles:
+            # Create rotation matrix
+            rot_y = trimesh.transformations.rotation_matrix(
+                np.radians(angle), [0, 1, 0]
+            )[:3, :3]
+
+            if elevation != 0:
+                rot_x = trimesh.transformations.rotation_matrix(
+                    np.radians(elevation), [1, 0, 0]
+                )[:3, :3]
+                rot_matrix = rot_x @ rot_y
+            else:
+                rot_matrix = rot_y
+
+            # Rotate vertices around centroid
+            centered_verts = vertices - centroid
+            rotated_verts = (rot_matrix @ centered_verts.T).T
+            final_verts = rotated_verts + centroid
+
             depth = self.mesh_renderer.render_depth(
-                vertices,
+                final_verts,
                 cam_t=cam_t,
                 render_res=self.render_res,
-                rot_axis=[0, 1, 0],
-                rot_angle=angle,
+                rot_axis=[1, 0, 0],
+                rot_angle=0,
                 normalize=normalize,
                 colormap=colormap,
             )
@@ -257,17 +303,40 @@ class OrbitRenderer:
         Returns:
             List of RGBA image arrays, each (H, W, 4) with values 0-1.
         """
+        import trimesh
+
         angles = self.generate_orbit_angles(n_frames)
         frames = []
 
+        # Compute keypoints centroid for rotation around center
+        centroid = keypoints_3d.mean(axis=0)
+
         for angle in angles:
+            # Create rotation matrix
+            rot_y = trimesh.transformations.rotation_matrix(
+                np.radians(angle), [0, 1, 0]
+            )[:3, :3]
+
+            if elevation != 0:
+                rot_x = trimesh.transformations.rotation_matrix(
+                    np.radians(elevation), [1, 0, 0]
+                )[:3, :3]
+                rot_matrix = rot_x @ rot_y
+            else:
+                rot_matrix = rot_y
+
+            # Rotate keypoints around centroid
+            centered_kpts = keypoints_3d - centroid
+            rotated_kpts = (rot_matrix @ centered_kpts.T).T
+            final_kpts = rotated_kpts + centroid
+
             frame = self.skeleton_renderer.render_skeleton(
-                keypoints_3d,
+                final_kpts,
                 cam_t,
                 self.render_res,
                 skeleton_format=skeleton_format,
-                rot_axis=[0, 1, 0],
-                rot_angle=angle,
+                rot_axis=[1, 0, 0],
+                rot_angle=0,
                 bg_color=bg_color,
             )
             frames.append(frame)
@@ -303,19 +372,47 @@ class OrbitRenderer:
         Returns:
             List of RGB image arrays, each (H, W, 3) with values 0-1.
         """
+        import trimesh
+
         angles = self.generate_orbit_angles(n_frames)
         frames = []
 
+        # Use mesh centroid as rotation center (skeleton should follow mesh)
+        centroid = vertices.mean(axis=0)
+
         for angle in angles:
+            # Create rotation matrix
+            rot_y = trimesh.transformations.rotation_matrix(
+                np.radians(angle), [0, 1, 0]
+            )[:3, :3]
+
+            if elevation != 0:
+                rot_x = trimesh.transformations.rotation_matrix(
+                    np.radians(elevation), [1, 0, 0]
+                )[:3, :3]
+                rot_matrix = rot_x @ rot_y
+            else:
+                rot_matrix = rot_y
+
+            # Rotate vertices around centroid
+            centered_verts = vertices - centroid
+            rotated_verts = (rot_matrix @ centered_verts.T).T
+            final_verts = rotated_verts + centroid
+
+            # Rotate keypoints around same centroid
+            centered_kpts = keypoints_3d - centroid
+            rotated_kpts = (rot_matrix @ centered_kpts.T).T
+            final_kpts = rotated_kpts + centroid
+
             frame = self.skeleton_renderer.render_mesh_with_skeleton(
-                vertices,
+                final_verts,
                 self.faces,
-                keypoints_3d,
+                final_kpts,
                 cam_t,
                 self.render_res,
                 skeleton_format=skeleton_format,
-                rot_axis=[0, 1, 0],
-                rot_angle=angle,
+                rot_axis=[1, 0, 0],
+                rot_angle=0,
                 mesh_color=mesh_color,
                 mesh_alpha=mesh_alpha,
                 bg_color=bg_color,
