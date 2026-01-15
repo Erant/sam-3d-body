@@ -268,12 +268,44 @@ def load_estimation_output(path: str) -> dict:
 def run_inference(image_path: str, checkpoint: str, mhr_path: str, person_idx: int = 0):
     """Run SAM-3D-Body inference on an image."""
     import cv2
-    from notebook.utils import setup_sam_3d_body
+    import torch
+    from sam_3d_body import SAM3DBodyEstimator, load_sam_3d_body
+
+    # Determine device
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print(f"Loading model from {checkpoint}...")
-    estimator = setup_sam_3d_body(
+    model, model_cfg = load_sam_3d_body(
         checkpoint_path=checkpoint,
         mhr_path=mhr_path,
+        device=device,
+    )
+
+    # Try to load detector (optional)
+    human_detector = None
+    try:
+        from tools.build_detector import HumanDetector
+        human_detector = HumanDetector(name="vitdet", device=device)
+        print("  Human detector loaded")
+    except Exception as e:
+        print(f"  Human detector not available: {e}")
+
+    # Try to load FOV estimator (optional)
+    fov_estimator = None
+    try:
+        from tools.build_fov_estimator import FOVEstimator
+        fov_estimator = FOVEstimator(name="moge2", device=device)
+        print("  FOV estimator loaded")
+    except Exception as e:
+        print(f"  FOV estimator not available: {e}")
+
+    # Create estimator
+    estimator = SAM3DBodyEstimator(
+        sam_3d_body_model=model,
+        model_cfg=model_cfg,
+        human_detector=human_detector,
+        human_segmentor=None,
+        fov_estimator=fov_estimator,
     )
 
     print(f"Processing image: {image_path}")
