@@ -1121,7 +1121,11 @@ class OrbitRenderer:
         """
         Compute camera intrinsics and extrinsics for each frame of an orbit.
 
-        The coordinate system places the mesh bounding box center at world origin.
+        Returns camera parameters representing an orbiting camera around a static
+        mesh (suitable for gaussian splatting and novel view synthesis). The mesh
+        is placed at world origin, and camera poses represent the camera orbiting
+        around it - not a rotating mesh with fixed camera.
+
         Camera poses are computed as camera-to-world (c2w) transformations.
 
         Args:
@@ -1182,7 +1186,10 @@ class OrbitRenderer:
         frames = []
 
         for i, azimuth in enumerate(angles):
-            # Create rotation matrix (same as rendering)
+            # Create rotation matrix for camera orbit
+            # Note: We render by rotating the mesh, but for gaussian splatting
+            # we need to express this as an orbiting camera around a static mesh.
+            # The camera orbits in the same direction as the visual rotation appears.
             rot_y = trimesh.transformations.rotation_matrix(
                 np.radians(azimuth), [0, 1, 0]
             )[:3, :3]
@@ -1191,25 +1198,35 @@ class OrbitRenderer:
                 rot_x = trimesh.transformations.rotation_matrix(
                     np.radians(elevation), [1, 0, 0]
                 )[:3, :3]
-                R = rot_x @ rot_y
+                R_orbit = rot_x @ rot_y
             else:
-                R = rot_y
+                R_orbit = rot_y
 
-            # In rendering: vertices_cam = R @ (vertices - centroid) + centroid + cam_t
-            # With world origin at centroid: vertices_cam = R @ vertices_world + cam_t
-            # So w2c = [R | cam_t], c2w = [R^T | -R^T @ cam_t]
+            # For orbiting camera around static mesh:
+            # - Initial camera position is at -cam_t relative to mesh center
+            # - Camera orbits by rotating this position around the Y axis
+            # - Camera orientation rotates to always face the mesh center
+            #
+            # Camera position: rotate initial position by orbit rotation
+            initial_cam_pos = -cam_t  # Camera position when azimuth=0
+            t_c2w = R_orbit @ initial_cam_pos  # Orbited camera position
 
-            R_c2w = R.T
-            t_c2w = -R.T @ cam_t  # Camera position in world coords
+            # Camera orientation: camera looks toward origin with up along Y
+            # For turntable orbit, the camera frame rotates with the orbit
+            # The c2w rotation is the same as the orbit rotation
+            R_c2w = R_orbit
 
             # Build 4x4 matrices
             c2w = np.eye(4)
             c2w[:3, :3] = R_c2w
             c2w[:3, 3] = t_c2w
 
+            # w2c is inverse of c2w: w2c = [R^T | -R^T @ t]
+            R_w2c = R_c2w.T
+            t_w2c = -R_c2w.T @ t_c2w
             w2c = np.eye(4)
-            w2c[:3, :3] = R
-            w2c[:3, 3] = cam_t
+            w2c[:3, :3] = R_w2c
+            w2c[:3, 3] = t_w2c
 
             # Convert rotation to quaternion (w, x, y, z)
             quat = self._rotation_to_quaternion(R_c2w)
