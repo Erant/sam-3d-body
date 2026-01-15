@@ -49,6 +49,10 @@ Usage:
     # Export for Plucker coordinates (numpy format)
     python tools/render_orbit.py --input output.npz --output orbit.mp4 \
         --export-cameras-plucker cameras.npz
+
+    # Match original image framing (frame 0 = same viewpoint as input)
+    python tools/render_orbit.py --input output.npz --output orbit.mp4 \
+        --match-original
 """
 
 import argparse
@@ -266,6 +270,12 @@ def parse_args():
         default=0.8,
         help="Target fill ratio for auto-frame (0-1, default: 0.8)",
     )
+    zoom_group.add_argument(
+        "--match-original",
+        action="store_true",
+        help="Match the original image framing. Frame 0 will have the same "
+             "viewpoint as the input image. Uses original focal length and bbox.",
+    )
 
     # Camera export options
     camera_group = parser.add_argument_group("Camera Export")
@@ -469,7 +479,9 @@ def main():
     vertices = output.get("pred_vertices")
     cam_t = output.get("pred_cam_t")
     keypoints_3d = output.get("pred_keypoints_3d")
-    focal_length = args.focal_length or output.get("focal_length", 5000.0)
+    bbox = output.get("bbox")
+    original_focal_length = output.get("focal_length", 5000.0)
+    focal_length = args.focal_length or original_focal_length
 
     if vertices is None or cam_t is None:
         print("Error: Input missing required fields (pred_vertices, pred_cam_t)")
@@ -485,6 +497,18 @@ def main():
             print("Error: Cannot render skeleton-only without keypoints")
             return 1
 
+    # Check if --match-original can be used
+    if args.match_original:
+        if bbox is None:
+            print("Warning: --match-original requires bbox in input. Falling back to auto-frame.")
+            args.match_original = False
+            args.auto_frame = True
+        else:
+            # Use original focal length for match-original mode
+            focal_length = original_focal_length
+            if not args.quiet:
+                print(f"Using original focal length: {focal_length:.1f}")
+
     # Import visualization modules
     from sam_3d_body.visualization import OrbitRenderer
 
@@ -499,6 +523,18 @@ def main():
         joint_radius=args.joint_radius,
         bone_radius=args.bone_radius,
     )
+
+    # Apply original framing if requested
+    if args.match_original and bbox is not None:
+        if not args.quiet:
+            print("Applying original image framing...")
+        vertices = orbit_renderer.apply_original_framing(
+            vertices, cam_t, bbox, original_focal_length
+        )
+        if keypoints_3d is not None:
+            keypoints_3d = orbit_renderer.apply_original_framing(
+                keypoints_3d, cam_t, bbox, original_focal_length
+            )
 
     # Override angle generation for custom ranges
     if args.start_angle != 0.0 or args.end_angle != 360.0:
@@ -516,6 +552,11 @@ def main():
     if not args.quiet:
         print(f"Rendering {args.n_frames} frames in '{mode}' mode...")
 
+    # When using --match-original, framing is already applied to vertices
+    # so we skip zoom/auto_frame in render_orbit
+    apply_zoom = None if args.match_original else args.zoom
+    apply_auto_frame = False if args.match_original else args.auto_frame
+
     result = orbit_renderer.render_orbit(
         vertices=vertices,
         cam_t=cam_t,
@@ -531,8 +572,8 @@ def main():
         mesh_alpha=args.mesh_alpha,
         bg_color=tuple(args.bg_color),
         depth_colormap=args.colormap if mode in ["depth", "depth_skeleton", "all"] else None,
-        zoom=args.zoom,
-        auto_frame=args.auto_frame,
+        zoom=apply_zoom,
+        auto_frame=apply_auto_frame,
         fill_ratio=args.fill_ratio,
     )
 
@@ -545,13 +586,15 @@ def main():
         if not args.quiet:
             print("Computing camera parameters...")
 
+        # When using --match-original, vertices are already transformed
+        # so we skip zoom/auto_frame in compute_orbit_cameras
         camera_data = orbit_renderer.compute_orbit_cameras(
             vertices=vertices,
             cam_t=cam_t,
             n_frames=args.n_frames,
             elevation=args.elevation,
-            zoom=args.zoom,
-            auto_frame=args.auto_frame,
+            zoom=apply_zoom,
+            auto_frame=apply_auto_frame,
             fill_ratio=args.fill_ratio,
         )
 
