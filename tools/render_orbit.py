@@ -37,6 +37,18 @@ Usage:
     # Save individual frames instead of video
     python tools/render_orbit.py --input output.npz --output-dir ./frames/ \
         --save-frames
+
+    # Export camera parameters for 3DGS (nerfstudio format)
+    python tools/render_orbit.py --input output.npz --output orbit.mp4 \
+        --export-cameras transforms.json
+
+    # Export camera parameters in COLMAP format
+    python tools/render_orbit.py --input output.npz --output orbit.mp4 \
+        --export-cameras-colmap ./colmap_sparse/
+
+    # Export for Plucker coordinates (numpy format)
+    python tools/render_orbit.py --input output.npz --output orbit.mp4 \
+        --export-cameras-plucker cameras.npz
 """
 
 import argparse
@@ -253,6 +265,37 @@ def parse_args():
         type=float,
         default=0.8,
         help="Target fill ratio for auto-frame (0-1, default: 0.8)",
+    )
+
+    # Camera export options
+    camera_group = parser.add_argument_group("Camera Export")
+    camera_group.add_argument(
+        "--export-cameras",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Export camera parameters to JSON (nerfstudio transforms.json format)",
+    )
+    camera_group.add_argument(
+        "--export-cameras-colmap",
+        type=str,
+        default=None,
+        metavar="DIR",
+        help="Export camera parameters in COLMAP format to directory",
+    )
+    camera_group.add_argument(
+        "--export-cameras-plucker",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Export camera parameters for Plucker coordinates (.npz)",
+    )
+    camera_group.add_argument(
+        "--export-cameras-generic",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Export all camera data in generic JSON format",
     )
 
     # Other options
@@ -492,6 +535,49 @@ def main():
         auto_frame=args.auto_frame,
         fill_ratio=args.fill_ratio,
     )
+
+    # Export camera parameters if requested
+    export_any_cameras = (
+        args.export_cameras or args.export_cameras_colmap or
+        args.export_cameras_plucker or args.export_cameras_generic
+    )
+    if export_any_cameras:
+        if not args.quiet:
+            print("Computing camera parameters...")
+
+        camera_data = orbit_renderer.compute_orbit_cameras(
+            vertices=vertices,
+            cam_t=cam_t,
+            n_frames=args.n_frames,
+            elevation=args.elevation,
+            zoom=args.zoom,
+            auto_frame=args.auto_frame,
+            fill_ratio=args.fill_ratio,
+        )
+
+        if args.export_cameras:
+            orbit_renderer.export_cameras_json(
+                camera_data, args.export_cameras, format="nerfstudio"
+            )
+            if not args.quiet:
+                print(f"Exported cameras (nerfstudio): {args.export_cameras}")
+
+        if args.export_cameras_generic:
+            orbit_renderer.export_cameras_json(
+                camera_data, args.export_cameras_generic, format="generic"
+            )
+            if not args.quiet:
+                print(f"Exported cameras (generic): {args.export_cameras_generic}")
+
+        if args.export_cameras_colmap:
+            orbit_renderer.export_cameras_colmap(camera_data, args.export_cameras_colmap)
+            if not args.quiet:
+                print(f"Exported cameras (COLMAP): {args.export_cameras_colmap}")
+
+        if args.export_cameras_plucker:
+            orbit_renderer.export_cameras_for_plucker(camera_data, args.export_cameras_plucker)
+            if not args.quiet:
+                print(f"Exported cameras (Plucker): {args.export_cameras_plucker}")
 
     # Determine which frames to save
     if mode in ["depth", "depth_skeleton"]:

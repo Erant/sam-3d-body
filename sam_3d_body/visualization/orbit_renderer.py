@@ -969,6 +969,338 @@ class OrbitRenderer:
 
         return paths
 
+    def compute_orbit_cameras(
+        self,
+        vertices: np.ndarray,
+        cam_t: np.ndarray,
+        n_frames: int = 36,
+        elevation: float = 0.0,
+        zoom: Optional[float] = None,
+        auto_frame: bool = False,
+        fill_ratio: float = 0.8,
+    ) -> dict:
+        """
+        Compute camera intrinsics and extrinsics for each frame of an orbit.
+
+        The coordinate system places the mesh centroid at world origin.
+        Camera poses are computed as camera-to-world (c2w) transformations.
+
+        Args:
+            vertices: Mesh vertices of shape (V, 3).
+            cam_t: Camera translation vector.
+            n_frames: Number of frames in orbit.
+            elevation: Elevation angle in degrees.
+            zoom: Manual zoom factor.
+            auto_frame: If True, auto-compute zoom to fill viewport.
+            fill_ratio: Target fill ratio for auto_frame.
+
+        Returns:
+            Dictionary containing:
+            - 'intrinsics': dict with fx, fy, cx, cy, width, height
+            - 'frames': list of dicts, each with:
+                - 'frame_id': int
+                - 'azimuth': float (degrees)
+                - 'elevation': float (degrees)
+                - 'c2w': 4x4 camera-to-world matrix
+                - 'w2c': 4x4 world-to-camera matrix
+                - 'camera_position': 3D camera position in world coords
+                - 'camera_rotation': 3x3 rotation matrix (c2w)
+                - 'quaternion_wxyz': quaternion (w, x, y, z) for c2w rotation
+        """
+        import trimesh
+
+        # Apply framing transformations to match rendering
+        if auto_frame:
+            vertices = self.apply_auto_framing(vertices, cam_t, fill_ratio)
+        elif zoom is not None and zoom != 1.0:
+            centroid = vertices.mean(axis=0)
+            vertices = self.apply_zoom(vertices, zoom, centroid)
+
+        # World origin is at mesh centroid
+        centroid = vertices.mean(axis=0)
+
+        # Intrinsics
+        width, height = self.render_res
+        cx = width / 2.0
+        cy = height / 2.0
+        intrinsics = {
+            "fx": self.focal_length,
+            "fy": self.focal_length,
+            "cx": cx,
+            "cy": cy,
+            "width": width,
+            "height": height,
+            # 3x3 intrinsic matrix
+            "K": [
+                [self.focal_length, 0, cx],
+                [0, self.focal_length, cy],
+                [0, 0, 1],
+            ],
+        }
+
+        # Generate camera poses for each frame
+        angles = self.generate_orbit_angles(n_frames)
+        frames = []
+
+        for i, azimuth in enumerate(angles):
+            # Create rotation matrix (same as rendering)
+            rot_y = trimesh.transformations.rotation_matrix(
+                np.radians(azimuth), [0, 1, 0]
+            )[:3, :3]
+
+            if elevation != 0:
+                rot_x = trimesh.transformations.rotation_matrix(
+                    np.radians(elevation), [1, 0, 0]
+                )[:3, :3]
+                R = rot_x @ rot_y
+            else:
+                R = rot_y
+
+            # In rendering: vertices_cam = R @ (vertices - centroid) + centroid + cam_t
+            # With world origin at centroid: vertices_cam = R @ vertices_world + cam_t
+            # So w2c = [R | cam_t], c2w = [R^T | -R^T @ cam_t]
+
+            R_c2w = R.T
+            t_c2w = -R.T @ cam_t  # Camera position in world coords
+
+            # Build 4x4 matrices
+            c2w = np.eye(4)
+            c2w[:3, :3] = R_c2w
+            c2w[:3, 3] = t_c2w
+
+            w2c = np.eye(4)
+            w2c[:3, :3] = R
+            w2c[:3, 3] = cam_t
+
+            # Convert rotation to quaternion (w, x, y, z)
+            quat = self._rotation_to_quaternion(R_c2w)
+
+            frames.append({
+                "frame_id": i,
+                "azimuth": azimuth,
+                "elevation": elevation,
+                "c2w": c2w.tolist(),
+                "w2c": w2c.tolist(),
+                "camera_position": t_c2w.tolist(),
+                "camera_rotation": R_c2w.tolist(),
+                "quaternion_wxyz": quat.tolist(),
+            })
+
+        return {
+            "intrinsics": intrinsics,
+            "frames": frames,
+            "world_centroid": centroid.tolist(),
+        }
+
+    def _rotation_to_quaternion(self, R: np.ndarray) -> np.ndarray:
+        """Convert 3x3 rotation matrix to quaternion (w, x, y, z)."""
+        # Using Shepperd's method for numerical stability
+        trace = np.trace(R)
+
+        if trace > 0:
+            s = 0.5 / np.sqrt(trace + 1.0)
+            w = 0.25 / s
+            x = (R[2, 1] - R[1, 2]) * s
+            y = (R[0, 2] - R[2, 0]) * s
+            z = (R[1, 0] - R[0, 1]) * s
+        elif R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
+            s = 2.0 * np.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2])
+            w = (R[2, 1] - R[1, 2]) / s
+            x = 0.25 * s
+            y = (R[0, 1] + R[1, 0]) / s
+            z = (R[0, 2] + R[2, 0]) / s
+        elif R[1, 1] > R[2, 2]:
+            s = 2.0 * np.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2])
+            w = (R[0, 2] - R[2, 0]) / s
+            x = (R[0, 1] + R[1, 0]) / s
+            y = 0.25 * s
+            z = (R[1, 2] + R[2, 1]) / s
+        else:
+            s = 2.0 * np.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1])
+            w = (R[1, 0] - R[0, 1]) / s
+            x = (R[0, 2] + R[2, 0]) / s
+            y = (R[1, 2] + R[2, 1]) / s
+            z = 0.25 * s
+
+        return np.array([w, x, y, z])
+
+    def export_cameras_json(
+        self,
+        camera_data: dict,
+        output_path: str,
+        format: str = "nerfstudio",
+    ) -> str:
+        """
+        Export camera parameters to JSON format.
+
+        Args:
+            camera_data: Output from compute_orbit_cameras().
+            output_path: Path to save JSON file.
+            format: Output format - 'nerfstudio' or 'generic'.
+
+        Returns:
+            Path to saved file.
+        """
+        import json
+
+        intrinsics = camera_data["intrinsics"]
+        frames = camera_data["frames"]
+
+        if format == "nerfstudio":
+            # Nerfstudio transforms.json format
+            output = {
+                "camera_model": "PINHOLE",
+                "fl_x": intrinsics["fx"],
+                "fl_y": intrinsics["fy"],
+                "cx": intrinsics["cx"],
+                "cy": intrinsics["cy"],
+                "w": intrinsics["width"],
+                "h": intrinsics["height"],
+                "frames": [
+                    {
+                        "file_path": f"images/frame_{f['frame_id']:04d}.png",
+                        "transform_matrix": f["c2w"],
+                    }
+                    for f in frames
+                ],
+            }
+        else:
+            # Generic format with all data
+            output = camera_data
+
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        with open(output_path, "w") as f:
+            json.dump(output, f, indent=2)
+
+        return output_path
+
+    def export_cameras_colmap(
+        self,
+        camera_data: dict,
+        output_dir: str,
+    ) -> str:
+        """
+        Export camera parameters in COLMAP text format.
+
+        Creates cameras.txt and images.txt in the output directory.
+
+        Args:
+            camera_data: Output from compute_orbit_cameras().
+            output_dir: Directory to save COLMAP files.
+
+        Returns:
+            Path to output directory.
+        """
+        os.makedirs(output_dir, exist_ok=True)
+
+        intrinsics = camera_data["intrinsics"]
+        frames = camera_data["frames"]
+
+        # cameras.txt - single camera for all images
+        # Format: CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]
+        # PINHOLE model: fx, fy, cx, cy
+        cameras_path = os.path.join(output_dir, "cameras.txt")
+        with open(cameras_path, "w") as f:
+            f.write("# Camera list with one line of data per camera:\n")
+            f.write("# CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
+            f.write(f"1 PINHOLE {intrinsics['width']} {intrinsics['height']} "
+                    f"{intrinsics['fx']} {intrinsics['fy']} "
+                    f"{intrinsics['cx']} {intrinsics['cy']}\n")
+
+        # images.txt - one entry per image
+        # Format: IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
+        # Note: COLMAP uses world-to-camera convention
+        images_path = os.path.join(output_dir, "images.txt")
+        with open(images_path, "w") as f:
+            f.write("# Image list with two lines per image:\n")
+            f.write("# IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
+            f.write("# POINTS2D[] as (X, Y, POINT3D_ID)\n")
+
+            for frame in frames:
+                image_id = frame["frame_id"] + 1
+                name = f"frame_{frame['frame_id']:04d}.png"
+
+                # COLMAP uses w2c, convert c2w quaternion to w2c
+                # w2c rotation is inverse of c2w rotation
+                R_c2w = np.array(frame["camera_rotation"])
+                R_w2c = R_c2w.T
+                quat_w2c = self._rotation_to_quaternion(R_w2c)
+
+                # w2c translation
+                w2c = np.array(frame["w2c"])
+                t_w2c = w2c[:3, 3]
+
+                f.write(f"{image_id} {quat_w2c[0]} {quat_w2c[1]} {quat_w2c[2]} "
+                        f"{quat_w2c[3]} {t_w2c[0]} {t_w2c[1]} {t_w2c[2]} 1 {name}\n")
+                f.write("\n")  # Empty line for 2D points
+
+        # points3D.txt - empty for now
+        points_path = os.path.join(output_dir, "points3D.txt")
+        with open(points_path, "w") as f:
+            f.write("# 3D point list (empty for orbit renders)\n")
+
+        return output_dir
+
+    def export_cameras_for_plucker(
+        self,
+        camera_data: dict,
+        output_path: str,
+    ) -> str:
+        """
+        Export camera parameters optimized for Plucker coordinate computation.
+
+        For each frame, provides ray origin (camera position) and the
+        camera rotation matrix needed to compute ray directions.
+
+        Plucker coordinates for a ray: (d, m) where d is direction, m = o × d
+        For pixel (u, v): direction = R @ normalize([u-cx, v-cy, f])
+
+        Args:
+            camera_data: Output from compute_orbit_cameras().
+            output_path: Path to save numpy archive.
+
+        Returns:
+            Path to saved file.
+        """
+        intrinsics = camera_data["intrinsics"]
+        frames = camera_data["frames"]
+
+        n_frames = len(frames)
+
+        # Arrays for efficient computation
+        camera_positions = np.zeros((n_frames, 3))
+        camera_rotations = np.zeros((n_frames, 3, 3))
+        c2w_matrices = np.zeros((n_frames, 4, 4))
+        w2c_matrices = np.zeros((n_frames, 4, 4))
+
+        for i, frame in enumerate(frames):
+            camera_positions[i] = frame["camera_position"]
+            camera_rotations[i] = frame["camera_rotation"]
+            c2w_matrices[i] = frame["c2w"]
+            w2c_matrices[i] = frame["w2c"]
+
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        np.savez(
+            output_path,
+            # Intrinsics
+            focal_length=intrinsics["fx"],
+            cx=intrinsics["cx"],
+            cy=intrinsics["cy"],
+            width=intrinsics["width"],
+            height=intrinsics["height"],
+            K=np.array(intrinsics["K"]),
+            # Extrinsics (per frame)
+            camera_positions=camera_positions,
+            camera_rotations=camera_rotations,
+            c2w_matrices=c2w_matrices,
+            w2c_matrices=w2c_matrices,
+            # Metadata
+            n_frames=n_frames,
+            world_centroid=np.array(camera_data["world_centroid"]),
+        )
+
+        return output_path
+
 
 class OrbitVisualization:
     """
