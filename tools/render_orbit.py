@@ -260,6 +260,12 @@ def parse_args():
         help="Number of complete 360° rotations for helical mode (default: 3)",
     )
     anim_group.add_argument(
+        "--sinusoidal-cycles",
+        type=int,
+        default=2,
+        help="Number of complete sinusoidal cycles for sinusoidal mode (default: 2)",
+    )
+    anim_group.add_argument(
         "--start-angle",
         type=float,
         default=0.0,
@@ -594,11 +600,12 @@ def main():
         bg_color=tuple(args.bg_color),
         depth_colormap=args.colormap if mode in ["depth", "depth_skeleton", "all"] else None,
         zoom=apply_zoom,
-        auto_frame=apply_auto_frame,
+        auto_frame=auto_frame,
         fill_ratio=args.fill_ratio,
         orbit_mode=args.orbit_mode,
         swing_amplitude=args.swing_amplitude,
         helical_loops=args.helical_loops,
+        sinusoidal_cycles=args.sinusoidal_cycles,
     )
 
     # Export camera parameters if requested
@@ -623,6 +630,7 @@ def main():
             orbit_mode=args.orbit_mode,
             swing_amplitude=args.swing_amplitude,
             helical_loops=args.helical_loops,
+            sinusoidal_cycles=args.sinusoidal_cycles,
         )
 
         if args.export_cameras:

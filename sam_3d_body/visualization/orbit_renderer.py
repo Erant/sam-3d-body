@@ -130,6 +130,7 @@ class OrbitRenderer:
         orbit_mode: str = "circular",
         swing_amplitude: float = 30.0,
         helical_loops: int = 3,
+        sinusoidal_cycles: int = 2,
     ) -> Tuple[List[float], List[float]]:
         """
         Generate rotation angles for orbit animation.
@@ -143,6 +144,7 @@ class OrbitRenderer:
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
                            Total range is -swing_amplitude to +swing_amplitude.
             helical_loops: Number of complete 360° rotations for helical mode.
+            sinusoidal_cycles: Number of complete sinusoidal cycles for sinusoidal mode.
 
         Returns:
             Tuple of (azimuth_angles, elevation_angles) lists in degrees.
@@ -172,9 +174,9 @@ class OrbitRenderer:
         # Generate elevation angles based on mode
         if orbit_mode == "sinusoidal":
             # Sinusoidal up and down motion: -swing to +swing
-            # Start at 0, go up, come down, end near 0
+            # Multiple complete cycles for better 3DGS coverage
             progress = np.linspace(0, 1, n_frames, endpoint=False)
-            elevation_angles = (swing_amplitude * np.sin(2 * np.pi * progress)).tolist()
+            elevation_angles = (swing_amplitude * np.sin(2 * np.pi * sinusoidal_cycles * progress)).tolist()
         elif orbit_mode == "helical":
             # Linear increase from bottom to top: -swing to +swing
             progress = np.linspace(0, 1, n_frames, endpoint=False)
@@ -449,6 +451,7 @@ class OrbitRenderer:
         orbit_mode: str = "circular",
         swing_amplitude: float = 30.0,
         helical_loops: int = 3,
+        sinusoidal_cycles: int = 2,
     ) -> List[np.ndarray]:
         """
         Render mesh orbit animation.
@@ -466,6 +469,7 @@ class OrbitRenderer:
             orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
             helical_loops: Number of complete rotations for helical mode.
+            sinusoidal_cycles: Number of complete sinusoidal cycles for sinusoidal mode.
 
         Returns:
             List of RGB image arrays, each (H, W, 3) with values 0-1.
@@ -478,6 +482,7 @@ class OrbitRenderer:
             orbit_mode=orbit_mode,
             swing_amplitude=swing_amplitude,
             helical_loops=helical_loops,
+            sinusoidal_cycles=sinusoidal_cycles,
         )
         frames = []
 
@@ -582,6 +587,7 @@ class OrbitRenderer:
         orbit_mode: str = "circular",
         swing_amplitude: float = 30.0,
         helical_loops: int = 3,
+        sinusoidal_cycles: int = 2,
     ) -> List[np.ndarray]:
         """
         Render depth orbit animation.
@@ -600,6 +606,7 @@ class OrbitRenderer:
             orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
             helical_loops: Number of complete rotations for helical mode.
+            sinusoidal_cycles: Number of complete sinusoidal cycles for sinusoidal mode.
 
         Returns:
             List of depth images. If colormap is set, shape is (H, W, 3) uint8.
@@ -613,6 +620,7 @@ class OrbitRenderer:
             orbit_mode=orbit_mode,
             swing_amplitude=swing_amplitude,
             helical_loops=helical_loops,
+            sinusoidal_cycles=sinusoidal_cycles,
         )
         frames = []
 
@@ -672,6 +680,7 @@ class OrbitRenderer:
         orbit_mode: str = "circular",
         swing_amplitude: float = 30.0,
         helical_loops: int = 3,
+        sinusoidal_cycles: int = 2,
     ) -> List[np.ndarray]:
         """
         Render skeleton-only orbit animation.
@@ -689,6 +698,7 @@ class OrbitRenderer:
             orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
             helical_loops: Number of complete rotations for helical mode.
+            sinusoidal_cycles: Number of complete sinusoidal cycles for sinusoidal mode.
 
         Returns:
             List of RGBA image arrays, each (H, W, 4) with values 0-1.
@@ -701,6 +711,7 @@ class OrbitRenderer:
             orbit_mode=orbit_mode,
             swing_amplitude=swing_amplitude,
             helical_loops=helical_loops,
+            sinusoidal_cycles=sinusoidal_cycles,
         )
         frames = []
 
@@ -763,6 +774,7 @@ class OrbitRenderer:
         orbit_mode: str = "circular",
         swing_amplitude: float = 30.0,
         helical_loops: int = 3,
+        sinusoidal_cycles: int = 2,
     ) -> List[np.ndarray]:
         """
         Render mesh with skeleton overlay orbit animation.
@@ -783,6 +795,7 @@ class OrbitRenderer:
             orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
             helical_loops: Number of complete rotations for helical mode.
+            sinusoidal_cycles: Number of complete sinusoidal cycles for sinusoidal mode.
 
         Returns:
             List of RGB image arrays, each (H, W, 3) with values 0-1.
@@ -795,6 +808,7 @@ class OrbitRenderer:
             orbit_mode=orbit_mode,
             swing_amplitude=swing_amplitude,
             helical_loops=helical_loops,
+            sinusoidal_cycles=sinusoidal_cycles,
         )
         frames = []
 
@@ -875,6 +889,7 @@ class OrbitRenderer:
         orbit_mode: str = "circular",
         swing_amplitude: float = 30.0,
         helical_loops: int = 3,
+        sinusoidal_cycles: int = 2,
     ) -> List[np.ndarray]:
         """
         Render depth map with skeleton overlay orbit animation.
@@ -894,6 +909,7 @@ class OrbitRenderer:
             orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
             helical_loops: Number of complete rotations for helical mode.
+            sinusoidal_cycles: Number of complete sinusoidal cycles for sinusoidal mode.
 
         Returns:
             List of RGB image arrays with depth background and skeleton overlay.
@@ -906,6 +922,7 @@ class OrbitRenderer:
             orbit_mode=orbit_mode,
             swing_amplitude=swing_amplitude,
             helical_loops=helical_loops,
+            sinusoidal_cycles=sinusoidal_cycles,
         )
         frames = []
 
@@ -1013,6 +1030,7 @@ class OrbitRenderer:
         orbit_mode: str = "circular",
         swing_amplitude: float = 30.0,
         helical_loops: int = 3,
+        sinusoidal_cycles: int = 2,
         # Output
         output_path: Optional[str] = None,
         fps: int = 30,
@@ -1042,6 +1060,7 @@ class OrbitRenderer:
             orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
             helical_loops: Number of complete rotations for helical mode.
+            sinusoidal_cycles: Number of complete sinusoidal cycles for sinusoidal mode.
             output_path: If set, save video to this path.
             fps: Frames per second for video output.
 
@@ -1074,6 +1093,7 @@ class OrbitRenderer:
                     orbit_mode=orbit_mode,
                     swing_amplitude=swing_amplitude,
                     helical_loops=helical_loops,
+                    sinusoidal_cycles=sinusoidal_cycles,
                 )
             else:
                 result["mesh_frames"] = self.render_orbit_mesh(
@@ -1089,6 +1109,7 @@ class OrbitRenderer:
                     orbit_mode=orbit_mode,
                     swing_amplitude=swing_amplitude,
                     helical_loops=helical_loops,
+                    sinusoidal_cycles=sinusoidal_cycles,
                 )
 
         # Depth rendering
@@ -1109,6 +1130,7 @@ class OrbitRenderer:
                     orbit_mode=orbit_mode,
                     swing_amplitude=swing_amplitude,
                     helical_loops=helical_loops,
+                    sinusoidal_cycles=sinusoidal_cycles,
                 )
             else:
                 result["depth_frames"] = self.render_orbit_depth(
@@ -1123,6 +1145,7 @@ class OrbitRenderer:
                     orbit_mode=orbit_mode,
                     swing_amplitude=swing_amplitude,
                     helical_loops=helical_loops,
+                    sinusoidal_cycles=sinusoidal_cycles,
                 )
 
         # Skeleton-only rendering
@@ -1140,6 +1163,7 @@ class OrbitRenderer:
                 orbit_mode=orbit_mode,
                 swing_amplitude=swing_amplitude,
                 helical_loops=helical_loops,
+                sinusoidal_cycles=sinusoidal_cycles,
             )
 
         # Save video if requested
@@ -1244,6 +1268,7 @@ class OrbitRenderer:
         orbit_mode: str = "circular",
         swing_amplitude: float = 30.0,
         helical_loops: int = 3,
+        sinusoidal_cycles: int = 2,
     ) -> dict:
         """
         Compute camera intrinsics and extrinsics for each frame of an orbit.
@@ -1266,6 +1291,7 @@ class OrbitRenderer:
             orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
             helical_loops: Number of complete rotations for helical mode.
+            sinusoidal_cycles: Number of complete sinusoidal cycles for sinusoidal mode.
 
         Returns:
             Dictionary containing:
@@ -1318,6 +1344,7 @@ class OrbitRenderer:
             orbit_mode=orbit_mode,
             swing_amplitude=swing_amplitude,
             helical_loops=helical_loops,
+            sinusoidal_cycles=sinusoidal_cycles,
         )
         frames = []
 
