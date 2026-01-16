@@ -600,7 +600,7 @@ def main():
         bg_color=tuple(args.bg_color),
         depth_colormap=args.colormap if mode in ["depth", "depth_skeleton", "all"] else None,
         zoom=apply_zoom,
-        auto_frame=auto_frame,
+        auto_frame=apply_auto_frame,
         fill_ratio=args.fill_ratio,
         orbit_mode=args.orbit_mode,
         swing_amplitude=args.swing_amplitude,
