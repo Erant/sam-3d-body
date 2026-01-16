@@ -592,6 +592,7 @@ class OrbitRenderer:
             n_frames: Number of frames in orbit.
             elevation: Base elevation angle for circular mode (degrees).
             colormap: OpenCV colormap name or None for grayscale (default: None).
+            colormap: OpenCV colormap name or None for grayscale.
             normalize: Whether to normalize depth values.
             zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
             auto_frame: If True, automatically compute zoom to fill viewport.
