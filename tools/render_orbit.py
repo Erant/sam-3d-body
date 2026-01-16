@@ -141,6 +141,13 @@ def parse_args():
         choices=["png", "jpg"],
         help="Format for saved frames (default: png)",
     )
+    output_group.add_argument(
+        "--frame-filename-format",
+        type=str,
+        default="frame_%04d.png",
+        metavar="FORMAT",
+        help='Printf-style format for frame filenames with 1-based indexing (default: "frame_%%04d.png")',
+    )
 
     # Render mode options
     mode_group = parser.add_argument_group("Render Mode")
@@ -713,13 +720,16 @@ def main():
         sinusoidal_cycles=args.sinusoidal_cycles,
     )
 
-    # Export camera parameters if requested
+    # Compute camera parameters if we're exporting cameras or saving frames with custom filenames
     export_any_cameras = (
         args.export_cameras or args.export_cameras_colmap or
         args.export_cameras_plucker or args.export_cameras_generic
     )
-    if export_any_cameras:
-        if not args.quiet:
+    need_camera_data = export_any_cameras or args.save_frames or args.output_dir
+
+    camera_data = None
+    if need_camera_data:
+        if not args.quiet and export_any_cameras:
             print("Computing camera parameters...")
 
         # When using --match-original, vertices are already transformed
@@ -736,8 +746,10 @@ def main():
             swing_amplitude=args.swing_amplitude,
             helical_loops=args.helical_loops,
             sinusoidal_cycles=args.sinusoidal_cycles,
+            frame_filename_format=args.frame_filename_format,
         )
 
+    if export_any_cameras:
         if args.export_cameras:
             orbit_renderer.export_cameras_json(
                 camera_data, args.export_cameras, format="nerfstudio"
@@ -811,11 +823,17 @@ def main():
         if not args.quiet:
             print(f"Saving {len(frames)} frames to {output_dir}")
 
+        # Extract filenames from camera_data if available
+        filenames = None
+        if camera_data is not None:
+            filenames = [f["frame_filename"] for f in camera_data["frames"]]
+
         paths = orbit_renderer.save_frames(
             frames,
             output_dir,
             prefix="frame",
             format=args.frame_format,
+            filenames=filenames,
         )
         if not args.quiet:
             print(f"Saved {len(paths)} frames")
@@ -828,6 +846,7 @@ def main():
                     os.path.join(output_dir, "depth"),
                     prefix="depth",
                     format=args.frame_format,
+                    filenames=filenames,
                 )
             if "skeleton_frames" in result:
                 orbit_renderer.save_frames(
@@ -835,6 +854,7 @@ def main():
                     os.path.join(output_dir, "skeleton"),
                     prefix="skeleton",
                     format=args.frame_format,
+                    filenames=filenames,
                 )
     else:
         if not args.quiet:

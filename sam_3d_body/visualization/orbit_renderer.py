@@ -1226,6 +1226,7 @@ class OrbitRenderer:
         output_dir: str,
         prefix: str = "frame",
         format: str = "png",
+        filenames: Optional[List[str]] = None,
     ) -> List[str]:
         """
         Save frames as individual images.
@@ -1233,8 +1234,9 @@ class OrbitRenderer:
         Args:
             frames: List of image arrays.
             output_dir: Output directory.
-            prefix: Filename prefix.
-            format: Image format (png, jpg).
+            prefix: Filename prefix (used only if filenames not provided).
+            format: Image format (png, jpg) (used only if filenames not provided).
+            filenames: Optional list of filenames to use (overrides prefix/format).
 
         Returns:
             List of saved file paths.
@@ -1250,7 +1252,15 @@ class OrbitRenderer:
                 frame = frame[:, :, :3]
 
             frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            path = os.path.join(output_dir, f"{prefix}_{i:04d}.{format}")
+
+            # Use provided filename or generate one
+            if filenames is not None and i < len(filenames):
+                filename = filenames[i]
+            else:
+                # Fallback to old behavior with 0-based indexing for backwards compatibility
+                filename = f"{prefix}_{i:04d}.{format}"
+
+            path = os.path.join(output_dir, filename)
             cv2.imwrite(path, frame_bgr)
             paths.append(path)
 
@@ -1269,6 +1279,7 @@ class OrbitRenderer:
         swing_amplitude: float = 30.0,
         helical_loops: int = 3,
         sinusoidal_cycles: int = 2,
+        frame_filename_format: str = "frame_%04d.png",
     ) -> dict:
         """
         Compute camera intrinsics and extrinsics for each frame of an orbit.
@@ -1292,12 +1303,14 @@ class OrbitRenderer:
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
             helical_loops: Number of complete rotations for helical mode.
             sinusoidal_cycles: Number of complete sinusoidal cycles for sinusoidal mode.
+            frame_filename_format: Printf-style format string for frame filenames (1-based indexing).
 
         Returns:
             Dictionary containing:
             - 'intrinsics': dict with fx, fy, cx, cy, width, height
             - 'frames': list of dicts, each with:
-                - 'frame_id': int
+                - 'frame_id': int (0-based for internal use)
+                - 'frame_filename': str (generated from format with 1-based index)
                 - 'azimuth': float (degrees)
                 - 'elevation': float (degrees)
                 - 'c2w': 4x4 camera-to-world matrix
@@ -1394,8 +1407,12 @@ class OrbitRenderer:
             # Convert rotation to quaternion (w, x, y, z)
             quat = self._rotation_to_quaternion(R_c2w)
 
+            # Generate frame filename using 1-based indexing
+            frame_filename = frame_filename_format % (i + 1)
+
             frames.append({
                 "frame_id": i,
+                "frame_filename": frame_filename,
                 "azimuth": azimuth,
                 "elevation": elev,
                 "c2w": c2w.tolist(),
@@ -1490,7 +1507,7 @@ class OrbitRenderer:
                 "h": intrinsics["height"],
                 "frames": [
                     {
-                        "file_path": f"images/frame_{f['frame_id']:04d}.png",
+                        "file_path": f.get("frame_filename", f"frame_{f['frame_id']:04d}.png"),
                         "transform_matrix": f["c2w"],
                     }
                     for f in frames
@@ -1553,7 +1570,7 @@ class OrbitRenderer:
 
             for frame in frames:
                 image_id = frame["frame_id"] + 1
-                name = f"frame_{frame['frame_id']:04d}.png"
+                name = frame.get("frame_filename", f"frame_{frame['frame_id']:04d}.png")
 
                 # COLMAP uses w2c, convert c2w quaternion to w2c
                 # w2c rotation is inverse of c2w rotation
