@@ -236,7 +236,28 @@ def parse_args():
         "--elevation",
         type=float,
         default=0.0,
-        help="Camera elevation angle in degrees (default: 0.0)",
+        help="Base camera elevation angle in degrees for circular mode (default: 0.0)",
+    )
+    anim_group.add_argument(
+        "--orbit-mode",
+        type=str,
+        choices=["circular", "sinusoidal", "helical"],
+        default="circular",
+        help="Orbit mode: 'circular' for flat rotation, 'sinusoidal' for up/down wave motion, "
+             "'helical' for spiral ascent (default: circular)",
+    )
+    anim_group.add_argument(
+        "--swing-amplitude",
+        type=float,
+        default=30.0,
+        help="Maximum vertical swing in degrees for sinusoidal/helical modes. "
+             "Range is -swing to +swing (default: 30.0, total 60 degree range)",
+    )
+    anim_group.add_argument(
+        "--helical-loops",
+        type=int,
+        default=3,
+        help="Number of complete 360° rotations for helical mode (default: 3)",
     )
     anim_group.add_argument(
         "--start-angle",
@@ -575,6 +596,9 @@ def main():
         zoom=apply_zoom,
         auto_frame=apply_auto_frame,
         fill_ratio=args.fill_ratio,
+        orbit_mode=args.orbit_mode,
+        swing_amplitude=args.swing_amplitude,
+        helical_loops=args.helical_loops,
     )
 
     # Export camera parameters if requested
@@ -596,6 +620,9 @@ def main():
             zoom=apply_zoom,
             auto_frame=apply_auto_frame,
             fill_ratio=args.fill_ratio,
+            orbit_mode=args.orbit_mode,
+            swing_amplitude=args.swing_amplitude,
+            helical_loops=args.helical_loops,
         )
 
         if args.export_cameras:
