@@ -1381,16 +1381,37 @@ class OrbitRenderer:
             # For orbiting camera around static mesh:
             # - Initial camera position is at -cam_t relative to mesh center
             # - Camera orbits by rotating this position around the Y axis
-            # - Camera orientation rotates to always face the mesh center
+            # - Camera orientation uses lookAt to always face the mesh center
             #
             # Camera position: rotate initial position by orbit rotation
             initial_cam_pos = -cam_t  # Camera position when azimuth=0
             t_c2w = R_orbit @ initial_cam_pos  # Orbited camera position
 
-            # Camera orientation: camera looks toward origin with up along Y
-            # For turntable orbit, the camera frame rotates with the orbit
-            # The c2w rotation is the same as the orbit rotation
-            R_c2w = R_orbit
+            # Camera orientation: build lookAt matrix
+            # Camera looks toward world origin (mesh center) with up = +Y
+            # This prevents camera roll/tumble as it orbits
+            #
+            # OpenGL convention: camera looks down -Z axis
+            # - Camera's +Z points backward (away from looking direction)
+            # - Camera's +Y points up
+            # - Camera's +X points right
+            center = np.array([0, 0, 0])  # Look at world origin
+            forward_dir = center - t_c2w  # Direction from camera toward origin (-Z direction)
+            forward_dir = forward_dir / np.linalg.norm(forward_dir)
+
+            world_up = np.array([0, 1, 0])  # Y-up
+
+            # Right-handed coordinate system
+            right = np.cross(forward_dir, world_up)
+            right = right / np.linalg.norm(right)
+
+            # Recompute up vector to ensure orthogonality
+            up = np.cross(right, forward_dir)
+
+            # Build camera-to-world rotation matrix
+            # Columns are camera's local axes in world coordinates
+            # Camera's +Z is opposite of the looking direction
+            R_c2w = np.column_stack([right, up, -forward_dir])
 
             # Build 4x4 matrices
             c2w = np.eye(4)
