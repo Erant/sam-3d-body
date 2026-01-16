@@ -98,6 +98,29 @@ def main(args):
             rend_img.astype(np.uint8),
         )
 
+        # Save mesh data for further processing if requested
+        if args.save_output:
+            # Collect vertices from all people
+            pred_vertices = np.array([out["pred_vertices"] for out in outputs])
+
+            # Save to npz file
+            output_data = {
+                "pred_vertices": pred_vertices,
+                "faces": estimator.faces,
+            }
+
+            # Also save other useful data
+            if len(outputs) > 0:
+                output_data["focal_length"] = np.array([out["focal_length"] for out in outputs])
+                output_data["pred_cam_t"] = np.array([out["pred_cam_t"] for out in outputs])
+                output_data["pred_keypoints_3d"] = np.array([out["pred_keypoints_3d"] for out in outputs])
+                output_data["pred_keypoints_2d"] = np.array([out["pred_keypoints_2d"] for out in outputs])
+
+            np.savez(
+                f"{output_folder}/{os.path.basename(image_path)[:-4]}.npz",
+                **output_data
+            )
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -185,6 +208,12 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Use mask-conditioned prediction (segmentation mask is automatically generated from bbox)",
+    )
+    parser.add_argument(
+        "--save_output",
+        action="store_true",
+        default=False,
+        help="Save mesh data (vertices, faces) to .npz file for further processing",
     )
     args = parser.parse_args()
 
