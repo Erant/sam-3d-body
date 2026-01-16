@@ -1462,6 +1462,19 @@ class OrbitRenderer:
         """
         import json
 
+        def convert_to_json_serializable(obj):
+            """Convert numpy types to Python native types for JSON serialization."""
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, (np.integer, np.floating)):
+                return obj.item()
+            elif isinstance(obj, dict):
+                return {k: convert_to_json_serializable(v) for k, v in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                return [convert_to_json_serializable(item) for item in obj]
+            else:
+                return obj
+
         intrinsics = camera_data["intrinsics"]
         frames = camera_data["frames"]
 
@@ -1486,6 +1499,9 @@ class OrbitRenderer:
         else:
             # Generic format with all data
             output = camera_data
+
+        # Convert numpy types to JSON-serializable Python types
+        output = convert_to_json_serializable(output)
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         with open(output_path, "w") as f:
