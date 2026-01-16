@@ -42,7 +42,7 @@ Usage:
     python tools/render_orbit.py --input output.npz --output orbit.mp4 \
         --export-cameras transforms.json
 
-    # Export camera parameters in COLMAP format
+    # Export camera parameters and 3D points in COLMAP format
     python tools/render_orbit.py --input output.npz --output orbit.mp4 \
         --export-cameras-colmap ./colmap_sparse/
 
@@ -335,7 +335,7 @@ def parse_args():
         type=str,
         default=None,
         metavar="DIR",
-        help="Export camera parameters in COLMAP format to directory",
+        help="Export camera parameters and 3D points in COLMAP format to directory",
     )
     camera_group.add_argument(
         "--export-cameras-plucker",
@@ -764,18 +764,15 @@ def main():
             if not args.quiet:
                 print(f"Exported cameras (generic): {args.export_cameras_generic}")
 
-        if args.export_cameras_colmap:
-            orbit_renderer.export_cameras_colmap(camera_data, args.export_cameras_colmap)
-            if not args.quiet:
-                print(f"Exported cameras (COLMAP): {args.export_cameras_colmap}")
-
         if args.export_cameras_plucker:
             orbit_renderer.export_cameras_for_plucker(camera_data, args.export_cameras_plucker)
             if not args.quiet:
                 print(f"Exported cameras (Plucker): {args.export_cameras_plucker}")
 
-    # Export point cloud if requested
-    if args.export_pointcloud:
+    # Generate point cloud if requested (for PLY export or COLMAP export)
+    points = None
+    normals = None
+    if args.export_pointcloud or args.export_cameras_colmap:
         if not args.quiet:
             print(f"Generating point cloud with {args.pointcloud_samples} samples...")
 
@@ -794,16 +791,37 @@ def main():
             for i, person_vertices in enumerate(vertices):
                 # Distribute points evenly, with remainder going to first person
                 n_points = points_per_person + (remainder if i == 0 else 0)
-                points, normals = sample_points_on_mesh(person_vertices, faces, n_points)
-                all_points.append(points)
-                all_normals.append(normals)
+                p, n = sample_points_on_mesh(person_vertices, faces, n_points)
+                all_points.append(p)
+                all_normals.append(n)
 
             points = np.concatenate(all_points, axis=0)
             normals = np.concatenate(all_normals, axis=0)
 
+    # Export point cloud in PLY format if requested
+    if args.export_pointcloud and points is not None:
         export_pointcloud_to_ply(points, normals, args.export_pointcloud)
         if not args.quiet:
             print(f"Exported point cloud ({len(points)} points): {args.export_pointcloud}")
+
+    # Export cameras in COLMAP format (with point cloud if available)
+    if args.export_cameras_colmap:
+        # Use default gray color for points (no mesh colors available)
+        point_colors = None
+        if points is not None:
+            point_colors = np.full((len(points), 3), 128, dtype=np.uint8)
+
+        orbit_renderer.export_cameras_colmap(
+            camera_data,
+            args.export_cameras_colmap,
+            points=points,
+            point_colors=point_colors,
+        )
+        if not args.quiet:
+            colmap_msg = f"Exported cameras (COLMAP): {args.export_cameras_colmap}"
+            if points is not None:
+                colmap_msg += f" (with {len(points)} 3D points)"
+            print(colmap_msg)
 
     # Determine which frames to save
     if mode in ["depth", "depth_skeleton"]:

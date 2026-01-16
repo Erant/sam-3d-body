@@ -1530,15 +1530,19 @@ class OrbitRenderer:
         self,
         camera_data: dict,
         output_dir: str,
+        points: Optional[np.ndarray] = None,
+        point_colors: Optional[np.ndarray] = None,
     ) -> str:
         """
         Export camera parameters in COLMAP text format.
 
-        Creates cameras.txt and images.txt in the output directory.
+        Creates cameras.txt, images.txt, and points3D.txt in the output directory.
 
         Args:
             camera_data: Output from compute_orbit_cameras().
             output_dir: Directory to save COLMAP files.
+            points: Optional (N, 3) array of 3D point positions.
+            point_colors: Optional (N, 3) array of RGB colors (0-255).
 
         Returns:
             Path to output directory.
@@ -1586,10 +1590,25 @@ class OrbitRenderer:
                         f"{quat_w2c[3]} {t_w2c[0]} {t_w2c[1]} {t_w2c[2]} 1 {name}\n")
                 f.write("\n")  # Empty line for 2D points
 
-        # points3D.txt - empty for now
+        # points3D.txt - 3D points if provided
+        # Format: POINT3D_ID X Y Z R G B ERROR TRACK[]
         points_path = os.path.join(output_dir, "points3D.txt")
         with open(points_path, "w") as f:
-            f.write("# 3D point list (empty for orbit renders)\n")
+            f.write("# 3D point list with one line of data per point:\n")
+            f.write("# POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)\n")
+
+            if points is not None:
+                # Default color if not provided (gray)
+                if point_colors is None:
+                    point_colors = np.full((len(points), 3), 128, dtype=np.uint8)
+
+                for i, (point, color) in enumerate(zip(points, point_colors)):
+                    point_id = i + 1
+                    # Write: POINT3D_ID X Y Z R G B ERROR TRACK[]
+                    # ERROR is 0 since we don't have reprojection error
+                    # TRACK is empty since we don't have 2D correspondences
+                    f.write(f"{point_id} {point[0]:.6f} {point[1]:.6f} {point[2]:.6f} "
+                            f"{int(color[0])} {int(color[1])} {int(color[2])} 0.0\n")
 
         return output_dir
 
