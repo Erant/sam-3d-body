@@ -127,22 +127,63 @@ class OrbitRenderer:
         elevation: float = 0.0,
         start_angle: float = 0.0,
         end_angle: float = 360.0,
-    ) -> List[float]:
+        orbit_mode: str = "circular",
+        swing_amplitude: float = 30.0,
+        helical_loops: int = 3,
+    ) -> Tuple[List[float], List[float]]:
         """
         Generate rotation angles for orbit animation.
 
         Args:
             n_frames: Number of frames in the orbit.
-            elevation: Elevation angle (not used for Y-axis rotation).
+            elevation: Base elevation angle for circular mode (degrees).
             start_angle: Starting azimuth angle in degrees.
             end_angle: Ending azimuth angle in degrees.
+            orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
+            swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
+                           Total range is -swing_amplitude to +swing_amplitude.
+            helical_loops: Number of complete 360° rotations for helical mode.
 
         Returns:
-            List of rotation angles in degrees.
+            Tuple of (azimuth_angles, elevation_angles) lists in degrees.
         """
         if n_frames == 1:
-            return [start_angle]
-        return np.linspace(start_angle, end_angle, n_frames, endpoint=False).tolist()
+            return [start_angle], [elevation]
+
+        # Generate azimuth angles based on mode
+        if orbit_mode == "helical":
+            # Multiple rotations over the entire sequence
+            total_rotation = 360.0 * helical_loops
+            azimuth_angles = np.linspace(
+                start_angle,
+                start_angle + total_rotation,
+                n_frames,
+                endpoint=False
+            ).tolist()
+        else:
+            # Single rotation (circular or sinusoidal)
+            azimuth_angles = np.linspace(
+                start_angle,
+                end_angle,
+                n_frames,
+                endpoint=False
+            ).tolist()
+
+        # Generate elevation angles based on mode
+        if orbit_mode == "sinusoidal":
+            # Sinusoidal up and down motion: -swing to +swing
+            # Start at 0, go up, come down, end near 0
+            progress = np.linspace(0, 1, n_frames, endpoint=False)
+            elevation_angles = (swing_amplitude * np.sin(2 * np.pi * progress)).tolist()
+        elif orbit_mode == "helical":
+            # Linear increase from bottom to top: -swing to +swing
+            progress = np.linspace(0, 1, n_frames, endpoint=False)
+            elevation_angles = (-swing_amplitude + 2 * swing_amplitude * progress).tolist()
+        else:  # circular (default)
+            # Constant elevation throughout
+            elevation_angles = [elevation] * n_frames
+
+        return azimuth_angles, elevation_angles
 
     def compute_original_framing(
         self,
@@ -405,6 +446,9 @@ class OrbitRenderer:
         zoom: Optional[float] = None,
         auto_frame: bool = False,
         fill_ratio: float = 0.8,
+        orbit_mode: str = "circular",
+        swing_amplitude: float = 30.0,
+        helical_loops: int = 3,
     ) -> List[np.ndarray]:
         """
         Render mesh orbit animation.
@@ -413,19 +457,28 @@ class OrbitRenderer:
             vertices: Mesh vertices of shape (V, 3).
             cam_t: Camera translation vector.
             n_frames: Number of frames in orbit.
-            elevation: Elevation angle for X-axis tilt in degrees.
+            elevation: Base elevation angle for circular mode (degrees).
             mesh_color: RGB color for mesh (0-1 range).
             bg_color: Background color RGB (0-1 range).
             zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
             auto_frame: If True, automatically compute zoom to fill viewport.
             fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
+            orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
+            swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
+            helical_loops: Number of complete rotations for helical mode.
 
         Returns:
             List of RGB image arrays, each (H, W, 3) with values 0-1.
         """
         import trimesh
 
-        angles = self.generate_orbit_angles(n_frames)
+        azimuth_angles, elevation_angles = self.generate_orbit_angles(
+            n_frames=n_frames,
+            elevation=elevation,
+            orbit_mode=orbit_mode,
+            swing_amplitude=swing_amplitude,
+            helical_loops=helical_loops,
+        )
         frames = []
 
         # Apply auto-framing (zoom + centering) or manual zoom
@@ -438,16 +491,16 @@ class OrbitRenderer:
         # Use bounding box center for rotation (matches visual center)
         rotation_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
 
-        for angle in angles:
+        for azimuth, elev in zip(azimuth_angles, elevation_angles):
             # Create rotation matrix around Y axis (turntable)
             rot_y = trimesh.transformations.rotation_matrix(
-                np.radians(angle), [0, 1, 0]
+                np.radians(azimuth), [0, 1, 0]
             )[:3, :3]
 
             # Apply elevation if specified
-            if elevation != 0:
+            if elev != 0:
                 rot_x = trimesh.transformations.rotation_matrix(
-                    np.radians(elevation), [1, 0, 0]
+                    np.radians(elev), [1, 0, 0]
                 )[:3, :3]
                 rot_matrix = rot_x @ rot_y
             else:
@@ -526,6 +579,9 @@ class OrbitRenderer:
         zoom: Optional[float] = None,
         auto_frame: bool = False,
         fill_ratio: float = 0.8,
+        orbit_mode: str = "circular",
+        swing_amplitude: float = 30.0,
+        helical_loops: int = 3,
     ) -> List[np.ndarray]:
         """
         Render depth orbit animation.
@@ -534,12 +590,15 @@ class OrbitRenderer:
             vertices: Mesh vertices of shape (V, 3).
             cam_t: Camera translation vector.
             n_frames: Number of frames in orbit.
-            elevation: Elevation angle in degrees.
+            elevation: Base elevation angle for circular mode (degrees).
             colormap: OpenCV colormap name or None for grayscale.
             normalize: Whether to normalize depth values.
             zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
             auto_frame: If True, automatically compute zoom to fill viewport.
             fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
+            orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
+            swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
+            helical_loops: Number of complete rotations for helical mode.
 
         Returns:
             List of depth images. If colormap is set, shape is (H, W, 3) uint8.
@@ -547,7 +606,13 @@ class OrbitRenderer:
         """
         import trimesh
 
-        angles = self.generate_orbit_angles(n_frames)
+        azimuth_angles, elevation_angles = self.generate_orbit_angles(
+            n_frames=n_frames,
+            elevation=elevation,
+            orbit_mode=orbit_mode,
+            swing_amplitude=swing_amplitude,
+            helical_loops=helical_loops,
+        )
         frames = []
 
         # Apply auto-framing (zoom + centering) or manual zoom
@@ -560,15 +625,15 @@ class OrbitRenderer:
         # Use bounding box center for rotation (matches visual center)
         rotation_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
 
-        for angle in angles:
+        for azimuth, elev in zip(azimuth_angles, elevation_angles):
             # Create rotation matrix
             rot_y = trimesh.transformations.rotation_matrix(
-                np.radians(angle), [0, 1, 0]
+                np.radians(azimuth), [0, 1, 0]
             )[:3, :3]
 
-            if elevation != 0:
+            if elev != 0:
                 rot_x = trimesh.transformations.rotation_matrix(
-                    np.radians(elevation), [1, 0, 0]
+                    np.radians(elev), [1, 0, 0]
                 )[:3, :3]
                 rot_matrix = rot_x @ rot_y
             else:
@@ -603,6 +668,9 @@ class OrbitRenderer:
         zoom: Optional[float] = None,
         auto_frame: bool = False,
         fill_ratio: float = 0.8,
+        orbit_mode: str = "circular",
+        swing_amplitude: float = 30.0,
+        helical_loops: int = 3,
     ) -> List[np.ndarray]:
         """
         Render skeleton-only orbit animation.
@@ -611,19 +679,28 @@ class OrbitRenderer:
             keypoints_3d: Joint positions of shape (N, 3).
             cam_t: Camera translation vector.
             n_frames: Number of frames in orbit.
-            elevation: Elevation angle in degrees.
+            elevation: Base elevation angle for circular mode (degrees).
             skeleton_format: Skeleton format ('mhr70', 'coco', 'openpose_body25').
             bg_color: Background color RGB (0-1 range).
             zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
             auto_frame: If True, automatically compute zoom to fill viewport.
             fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
+            orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
+            swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
+            helical_loops: Number of complete rotations for helical mode.
 
         Returns:
             List of RGBA image arrays, each (H, W, 4) with values 0-1.
         """
         import trimesh
 
-        angles = self.generate_orbit_angles(n_frames)
+        azimuth_angles, elevation_angles = self.generate_orbit_angles(
+            n_frames=n_frames,
+            elevation=elevation,
+            orbit_mode=orbit_mode,
+            swing_amplitude=swing_amplitude,
+            helical_loops=helical_loops,
+        )
         frames = []
 
         # Apply auto-framing (zoom + centering) or manual zoom
@@ -636,15 +713,15 @@ class OrbitRenderer:
         # Use bounding box center for rotation (matches visual center)
         rotation_center = (keypoints_3d.min(axis=0) + keypoints_3d.max(axis=0)) / 2
 
-        for angle in angles:
+        for azimuth, elev in zip(azimuth_angles, elevation_angles):
             # Create rotation matrix
             rot_y = trimesh.transformations.rotation_matrix(
-                np.radians(angle), [0, 1, 0]
+                np.radians(azimuth), [0, 1, 0]
             )[:3, :3]
 
-            if elevation != 0:
+            if elev != 0:
                 rot_x = trimesh.transformations.rotation_matrix(
-                    np.radians(elevation), [1, 0, 0]
+                    np.radians(elev), [1, 0, 0]
                 )[:3, :3]
                 rot_matrix = rot_x @ rot_y
             else:
@@ -682,6 +759,9 @@ class OrbitRenderer:
         zoom: Optional[float] = None,
         auto_frame: bool = False,
         fill_ratio: float = 0.8,
+        orbit_mode: str = "circular",
+        swing_amplitude: float = 30.0,
+        helical_loops: int = 3,
     ) -> List[np.ndarray]:
         """
         Render mesh with skeleton overlay orbit animation.
@@ -691,7 +771,7 @@ class OrbitRenderer:
             keypoints_3d: Joint positions of shape (N, 3).
             cam_t: Camera translation vector.
             n_frames: Number of frames in orbit.
-            elevation: Elevation angle in degrees.
+            elevation: Base elevation angle for circular mode (degrees).
             skeleton_format: Skeleton format for connectivity.
             mesh_color: RGB color for mesh (0-1 range).
             mesh_alpha: Mesh transparency (0=transparent, 1=opaque).
@@ -699,13 +779,22 @@ class OrbitRenderer:
             zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
             auto_frame: If True, automatically compute zoom to fill viewport.
             fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
+            orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
+            swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
+            helical_loops: Number of complete rotations for helical mode.
 
         Returns:
             List of RGB image arrays, each (H, W, 3) with values 0-1.
         """
         import trimesh
 
-        angles = self.generate_orbit_angles(n_frames)
+        azimuth_angles, elevation_angles = self.generate_orbit_angles(
+            n_frames=n_frames,
+            elevation=elevation,
+            orbit_mode=orbit_mode,
+            swing_amplitude=swing_amplitude,
+            helical_loops=helical_loops,
+        )
         frames = []
 
         # Apply auto-framing (zoom + centering) or manual zoom
@@ -728,15 +817,15 @@ class OrbitRenderer:
         # Use bounding box center for rotation (matches visual center)
         rotation_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
 
-        for angle in angles:
+        for azimuth, elev in zip(azimuth_angles, elevation_angles):
             # Create rotation matrix
             rot_y = trimesh.transformations.rotation_matrix(
-                np.radians(angle), [0, 1, 0]
+                np.radians(azimuth), [0, 1, 0]
             )[:3, :3]
 
-            if elevation != 0:
+            if elev != 0:
                 rot_x = trimesh.transformations.rotation_matrix(
-                    np.radians(elevation), [1, 0, 0]
+                    np.radians(elev), [1, 0, 0]
                 )[:3, :3]
                 rot_matrix = rot_x @ rot_y
             else:
@@ -782,6 +871,9 @@ class OrbitRenderer:
         zoom: Optional[float] = None,
         auto_frame: bool = False,
         fill_ratio: float = 0.8,
+        orbit_mode: str = "circular",
+        swing_amplitude: float = 30.0,
+        helical_loops: int = 3,
     ) -> List[np.ndarray]:
         """
         Render depth map with skeleton overlay orbit animation.
@@ -791,20 +883,29 @@ class OrbitRenderer:
             keypoints_3d: Joint positions of shape (N, 3).
             cam_t: Camera translation vector.
             n_frames: Number of frames in orbit.
-            elevation: Elevation angle in degrees.
+            elevation: Base elevation angle for circular mode (degrees).
             skeleton_format: Skeleton format for connectivity.
             colormap: OpenCV colormap name or None for grayscale.
             normalize: Whether to normalize depth values.
             zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
             auto_frame: If True, automatically compute zoom to fill viewport.
             fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
+            orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
+            swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
+            helical_loops: Number of complete rotations for helical mode.
 
         Returns:
             List of RGB image arrays with depth background and skeleton overlay.
         """
         import trimesh
 
-        angles = self.generate_orbit_angles(n_frames)
+        azimuth_angles, elevation_angles = self.generate_orbit_angles(
+            n_frames=n_frames,
+            elevation=elevation,
+            orbit_mode=orbit_mode,
+            swing_amplitude=swing_amplitude,
+            helical_loops=helical_loops,
+        )
         frames = []
 
         # Apply auto-framing (zoom + centering) or manual zoom
@@ -827,15 +928,15 @@ class OrbitRenderer:
         # Use bounding box center for rotation (matches visual center)
         rotation_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
 
-        for angle in angles:
+        for azimuth, elev in zip(azimuth_angles, elevation_angles):
             # Create rotation matrix
             rot_y = trimesh.transformations.rotation_matrix(
-                np.radians(angle), [0, 1, 0]
+                np.radians(azimuth), [0, 1, 0]
             )[:3, :3]
 
-            if elevation != 0:
+            if elev != 0:
                 rot_x = trimesh.transformations.rotation_matrix(
-                    np.radians(elevation), [1, 0, 0]
+                    np.radians(elev), [1, 0, 0]
                 )[:3, :3]
                 rot_matrix = rot_x @ rot_y
             else:
@@ -907,6 +1008,10 @@ class OrbitRenderer:
         zoom: Optional[float] = None,
         auto_frame: bool = False,
         fill_ratio: float = 0.8,
+        # Orbit modes
+        orbit_mode: str = "circular",
+        swing_amplitude: float = 30.0,
+        helical_loops: int = 3,
         # Output
         output_path: Optional[str] = None,
         fps: int = 30,
@@ -919,7 +1024,7 @@ class OrbitRenderer:
             cam_t: Camera translation vector.
             keypoints_3d: Optional joint positions for skeleton rendering.
             n_frames: Number of frames in orbit.
-            elevation: Elevation angle in degrees.
+            elevation: Base elevation angle for circular mode (degrees).
             render_mesh: Whether to render the mesh.
             render_depth: Whether to render depth maps.
             render_skeleton: Whether to render skeleton.
@@ -933,6 +1038,9 @@ class OrbitRenderer:
             zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
             auto_frame: If True, automatically compute zoom to fill viewport.
             fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
+            orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
+            swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
+            helical_loops: Number of complete rotations for helical mode.
             output_path: If set, save video to this path.
             fps: Frames per second for video output.
 
@@ -962,6 +1070,9 @@ class OrbitRenderer:
                     zoom=zoom,
                     auto_frame=auto_frame,
                     fill_ratio=fill_ratio,
+                    orbit_mode=orbit_mode,
+                    swing_amplitude=swing_amplitude,
+                    helical_loops=helical_loops,
                 )
             else:
                 result["mesh_frames"] = self.render_orbit_mesh(
@@ -974,6 +1085,9 @@ class OrbitRenderer:
                     zoom=zoom,
                     auto_frame=auto_frame,
                     fill_ratio=fill_ratio,
+                    orbit_mode=orbit_mode,
+                    swing_amplitude=swing_amplitude,
+                    helical_loops=helical_loops,
                 )
 
         # Depth rendering
@@ -991,6 +1105,9 @@ class OrbitRenderer:
                     zoom=zoom,
                     auto_frame=auto_frame,
                     fill_ratio=fill_ratio,
+                    orbit_mode=orbit_mode,
+                    swing_amplitude=swing_amplitude,
+                    helical_loops=helical_loops,
                 )
             else:
                 result["depth_frames"] = self.render_orbit_depth(
@@ -1002,6 +1119,9 @@ class OrbitRenderer:
                     zoom=zoom,
                     auto_frame=auto_frame,
                     fill_ratio=fill_ratio,
+                    orbit_mode=orbit_mode,
+                    swing_amplitude=swing_amplitude,
+                    helical_loops=helical_loops,
                 )
 
         # Skeleton-only rendering
@@ -1016,6 +1136,9 @@ class OrbitRenderer:
                 zoom=zoom,
                 auto_frame=auto_frame,
                 fill_ratio=fill_ratio,
+                orbit_mode=orbit_mode,
+                swing_amplitude=swing_amplitude,
+                helical_loops=helical_loops,
             )
 
         # Save video if requested
@@ -1117,6 +1240,9 @@ class OrbitRenderer:
         zoom: Optional[float] = None,
         auto_frame: bool = False,
         fill_ratio: float = 0.8,
+        orbit_mode: str = "circular",
+        swing_amplitude: float = 30.0,
+        helical_loops: int = 3,
     ) -> dict:
         """
         Compute camera intrinsics and extrinsics for each frame of an orbit.
@@ -1132,10 +1258,13 @@ class OrbitRenderer:
             vertices: Mesh vertices of shape (V, 3).
             cam_t: Camera translation vector.
             n_frames: Number of frames in orbit.
-            elevation: Elevation angle in degrees.
+            elevation: Base elevation angle for circular mode (degrees).
             zoom: Manual zoom factor.
             auto_frame: If True, auto-compute zoom to fill viewport.
             fill_ratio: Target fill ratio for auto_frame.
+            orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
+            swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
+            helical_loops: Number of complete rotations for helical mode.
 
         Returns:
             Dictionary containing:
@@ -1182,10 +1311,16 @@ class OrbitRenderer:
         }
 
         # Generate camera poses for each frame
-        angles = self.generate_orbit_angles(n_frames)
+        azimuth_angles, elevation_angles = self.generate_orbit_angles(
+            n_frames=n_frames,
+            elevation=elevation,
+            orbit_mode=orbit_mode,
+            swing_amplitude=swing_amplitude,
+            helical_loops=helical_loops,
+        )
         frames = []
 
-        for i, azimuth in enumerate(angles):
+        for i, (azimuth, elev) in enumerate(zip(azimuth_angles, elevation_angles)):
             # Create rotation matrix for camera orbit
             # Note: We render by rotating the mesh, but for gaussian splatting
             # we need to express this as an orbiting camera around a static mesh.
@@ -1194,9 +1329,9 @@ class OrbitRenderer:
                 np.radians(azimuth), [0, 1, 0]
             )[:3, :3]
 
-            if elevation != 0:
+            if elev != 0:
                 rot_x = trimesh.transformations.rotation_matrix(
-                    np.radians(elevation), [1, 0, 0]
+                    np.radians(elev), [1, 0, 0]
                 )[:3, :3]
                 R_orbit = rot_x @ rot_y
             else:
@@ -1234,7 +1369,7 @@ class OrbitRenderer:
             frames.append({
                 "frame_id": i,
                 "azimuth": azimuth,
-                "elevation": elevation,
+                "elevation": elev,
                 "c2w": c2w.tolist(),
                 "w2c": w2c.tolist(),
                 "camera_position": t_c2w.tolist(),
