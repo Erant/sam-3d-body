@@ -50,6 +50,16 @@ Usage:
     python tools/render_orbit.py --input output.npz --output orbit.mp4 \
         --export-cameras-plucker cameras.npz
 
+    # Export point cloud for Gaussian Splatting initialization
+    python tools/render_orbit.py --input output.npz --output orbit.mp4 \
+        --export-pointcloud pointcloud.ply --pointcloud-samples 50000
+
+    # Complete Gaussian Splatting workflow (cameras + point cloud)
+    python tools/render_orbit.py --input output.npz --output orbit.mp4 \
+        --export-cameras transforms.json \
+        --export-pointcloud pointcloud.ply \
+        --pointcloud-samples 50000
+
     # Match original image framing (frame 0 = same viewpoint as input)
     python tools/render_orbit.py --input output.npz --output orbit.mp4 \
         --match-original
@@ -335,6 +345,22 @@ def parse_args():
         help="Export all camera data in generic JSON format",
     )
 
+    # Point cloud export options
+    pointcloud_group = parser.add_argument_group("Point Cloud Export (for Gaussian Splatting)")
+    pointcloud_group.add_argument(
+        "--export-pointcloud",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Export point cloud sampled from mesh surface (.ply)",
+    )
+    pointcloud_group.add_argument(
+        "--pointcloud-samples",
+        type=int,
+        default=10000,
+        help="Number of points to sample on mesh surface (default: 10000)",
+    )
+
     # Other options
     parser.add_argument(
         "--focal-length",
@@ -383,6 +409,85 @@ def load_estimation_output(path: str) -> dict:
             return pickle.load(f)
     else:
         raise ValueError(f"Unsupported file format: {path}")
+
+
+def sample_points_on_mesh(vertices, faces, num_points=10000):
+    """
+    Sample points uniformly on the mesh surface.
+
+    Args:
+        vertices: numpy array of shape (N, 3) containing vertex positions
+        faces: numpy array of shape (M, 3) containing face indices
+        num_points: number of points to sample on the surface
+
+    Returns:
+        points: numpy array of shape (num_points, 3) containing sampled point positions
+        normals: numpy array of shape (num_points, 3) containing surface normals at each point
+    """
+    import trimesh
+
+    # Create trimesh object
+    mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+
+    # Sample points uniformly on the surface
+    # sample_surface_even provides more uniform sampling than sample_surface
+    points, face_indices = trimesh.sample.sample_surface_even(mesh, num_points)
+
+    # Get normals at sampled points
+    normals = mesh.face_normals[face_indices]
+
+    return points, normals
+
+
+def export_pointcloud_to_ply(points, normals, output_path, colors=None):
+    """
+    Export point cloud to PLY format.
+
+    Args:
+        points: numpy array of shape (N, 3) containing point positions
+        normals: numpy array of shape (N, 3) containing point normals
+        output_path: path to save the PLY file
+        colors: optional numpy array of shape (N, 3) containing RGB colors (0-255)
+    """
+    num_points = len(points)
+
+    # Create PLY header
+    header = [
+        "ply",
+        "format ascii 1.0",
+        f"element vertex {num_points}",
+        "property float x",
+        "property float y",
+        "property float z",
+        "property float nx",
+        "property float ny",
+        "property float nz",
+    ]
+
+    # Add color properties if colors are provided
+    if colors is not None:
+        header.extend([
+            "property uchar red",
+            "property uchar green",
+            "property uchar blue",
+        ])
+
+    header.append("end_header")
+
+    # Write PLY file
+    with open(output_path, 'w') as f:
+        # Write header
+        f.write('\n'.join(header) + '\n')
+
+        # Write point data
+        for i in range(num_points):
+            line = f"{points[i, 0]:.6f} {points[i, 1]:.6f} {points[i, 2]:.6f} "
+            line += f"{normals[i, 0]:.6f} {normals[i, 1]:.6f} {normals[i, 2]:.6f}"
+
+            if colors is not None:
+                line += f" {int(colors[i, 0])} {int(colors[i, 1])} {int(colors[i, 2])}"
+
+            f.write(line + '\n')
 
 
 def run_inference(image_path: str, checkpoint: str, mhr_path: str, person_idx: int = 0):
@@ -656,6 +761,37 @@ def main():
             orbit_renderer.export_cameras_for_plucker(camera_data, args.export_cameras_plucker)
             if not args.quiet:
                 print(f"Exported cameras (Plucker): {args.export_cameras_plucker}")
+
+    # Export point cloud if requested
+    if args.export_pointcloud:
+        if not args.quiet:
+            print(f"Generating point cloud with {args.pointcloud_samples} samples...")
+
+        # Handle multi-person case
+        if vertices.ndim == 2:
+            # Single person: vertices is (N, 3)
+            points, normals = sample_points_on_mesh(vertices, faces, args.pointcloud_samples)
+        else:
+            # Multiple people: vertices is (num_people, N, 3)
+            all_points = []
+            all_normals = []
+            num_people = len(vertices)
+            points_per_person = args.pointcloud_samples // num_people
+            remainder = args.pointcloud_samples % num_people
+
+            for i, person_vertices in enumerate(vertices):
+                # Distribute points evenly, with remainder going to first person
+                n_points = points_per_person + (remainder if i == 0 else 0)
+                points, normals = sample_points_on_mesh(person_vertices, faces, n_points)
+                all_points.append(points)
+                all_normals.append(normals)
+
+            points = np.concatenate(all_points, axis=0)
+            normals = np.concatenate(all_normals, axis=0)
+
+        export_pointcloud_to_ply(points, normals, args.export_pointcloud)
+        if not args.quiet:
+            print(f"Exported point cloud ({len(points)} points): {args.export_pointcloud}")
 
     # Determine which frames to save
     if mode in ["depth", "depth_skeleton"]:
