@@ -1369,9 +1369,9 @@ class OrbitRenderer:
 
         # Convert initial offset to spherical coordinates
         # This gives us the base azimuth/elevation to preserve the initial view
-        # Note: negate X in arctan2 to match the negated X in forward conversion
+        # Note: negate X and Y to match the negated X and Y in forward conversion
         base_azimuth = np.degrees(np.arctan2(-initial_offset[0], initial_offset[2]))
-        base_elevation = np.degrees(np.arcsin(initial_offset[1] / radius))
+        base_elevation = np.degrees(np.arcsin(-initial_offset[1] / radius))
 
         for i, (azimuth, elev) in enumerate(zip(azimuth_angles, elevation_angles)):
             # For orbiting camera around static mesh:
@@ -1389,15 +1389,14 @@ class OrbitRenderer:
             elev_rad = np.radians(actual_elevation)
 
             # Spherical to Cartesian conversion around world_center
-            # The mesh rotates counterclockwise (from above), which appears as rotating
-            # to the right from the camera's perspective. The camera must orbit to the
-            # right (clockwise from above) to maintain the same view.
-            # x = -r * cos(elevation) * sin(azimuth)  (negated for correct handedness)
-            # y = r * sin(elevation)
+            # The mesh rotates in one direction, the camera must orbit in the opposite
+            # direction to maintain the same view. Both X and Y are negated.
+            # x = -r * cos(elevation) * sin(azimuth)  (negated: mesh rotates CCW around Y, camera CW)
+            # y = -r * sin(elevation)                  (negated: mesh rotates around X, camera opposite)
             # z = r * cos(elevation) * cos(azimuth)
             offset = np.array([
                 -radius * np.cos(elev_rad) * np.sin(azim_rad),
-                radius * np.sin(elev_rad),
+                -radius * np.sin(elev_rad),
                 radius * np.cos(elev_rad) * np.cos(azim_rad)
             ])
             t_c2w = world_center + offset
