@@ -1362,41 +1362,41 @@ class OrbitRenderer:
         frames = []
 
         for i, (azimuth, elev) in enumerate(zip(azimuth_angles, elevation_angles)):
-            # Create rotation matrix for camera orbit
-            # Note: We render by rotating the mesh, but for gaussian splatting
-            # we need to express this as an orbiting camera around a static mesh.
-            # The camera orbits in the same direction as the visual rotation appears.
-            rot_y = trimesh.transformations.rotation_matrix(
-                np.radians(azimuth), [0, 1, 0]
-            )[:3, :3]
-
-            if elev != 0:
-                rot_x = trimesh.transformations.rotation_matrix(
-                    np.radians(elev), [1, 0, 0]
-                )[:3, :3]
-                R_orbit = rot_x @ rot_y
-            else:
-                R_orbit = rot_y
-
             # For orbiting camera around static mesh:
-            # - Initial camera position is at -cam_t relative to mesh center
-            # - Camera orbits by rotating this position around the Y axis
+            # - Camera orbits around the mesh bounding box center (world_center)
+            # - Camera uses spherical coordinates for smooth helical paths
             # - Camera orientation uses lookAt to always face the mesh center
-            #
-            # Camera position: rotate initial position by orbit rotation
-            initial_cam_pos = -cam_t  # Camera position when azimuth=0
-            t_c2w = R_orbit @ initial_cam_pos  # Orbited camera position
+
+            # Compute camera position using spherical coordinates around mesh center
+            # This ensures smooth helical paths without self-crossing
+            initial_cam_pos = -cam_t  # Camera position in world coordinates
+            radius = np.linalg.norm(initial_cam_pos - world_center)  # Distance to mesh center
+
+            # Convert angles to radians
+            azim_rad = np.radians(azimuth)
+            elev_rad = np.radians(elev)
+
+            # Spherical to Cartesian conversion around world_center
+            # x = r * cos(elevation) * sin(azimuth)
+            # y = r * sin(elevation)
+            # z = r * cos(elevation) * cos(azimuth)
+            offset = np.array([
+                radius * np.cos(elev_rad) * np.sin(azim_rad),
+                radius * np.sin(elev_rad),
+                radius * np.cos(elev_rad) * np.cos(azim_rad)
+            ])
+            t_c2w = world_center + offset
 
             # Camera orientation: build lookAt matrix
-            # Camera looks toward world origin (mesh center) with up = +Y
+            # Camera looks toward mesh bounding box center with up = +Y
             # This prevents camera roll/tumble as it orbits
             #
             # OpenGL convention: camera looks down -Z axis
             # - Camera's +Z points backward (away from looking direction)
             # - Camera's +Y points up
             # - Camera's +X points right
-            center = np.array([0, 0, 0])  # Look at world origin
-            forward_dir = center - t_c2w  # Direction from camera toward origin (-Z direction)
+            center = world_center  # Look at mesh bounding box center
+            forward_dir = center - t_c2w  # Direction from camera toward center (-Z direction)
             forward_dir = forward_dir / np.linalg.norm(forward_dir)
 
             world_up = np.array([0, 1, 0])  # Y-up
