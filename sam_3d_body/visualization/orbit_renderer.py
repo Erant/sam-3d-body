@@ -1166,59 +1166,8 @@ class OrbitRenderer:
                 sinusoidal_cycles=sinusoidal_cycles,
             )
 
-        # Save video if requested
-        if output_path:
-            frames_to_save = result.get("mesh_frames", result.get("depth_frames", []))
-            if frames_to_save:
-                self.save_video(frames_to_save, output_path, fps=fps)
-                result["video_path"] = output_path
-
         return result
 
-    def save_video(
-        self,
-        frames: List[np.ndarray],
-        output_path: str,
-        fps: int = 30,
-    ) -> str:
-        """
-        Save frames as MP4 video.
-
-        Args:
-            frames: List of image arrays (H, W, 3) or (H, W, 4).
-            output_path: Output video file path.
-            fps: Frames per second.
-
-        Returns:
-            Path to saved video.
-        """
-        if not frames:
-            raise ValueError("No frames to save")
-
-        # Ensure output directory exists
-        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-
-        # Get frame dimensions
-        h, w = frames[0].shape[:2]
-
-        # Setup video writer
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
-
-        for frame in frames:
-            # Convert to uint8 BGR
-            if frame.max() <= 1.0:
-                frame = (frame * 255).astype(np.uint8)
-
-            if frame.shape[2] == 4:
-                frame = frame[:, :, :3]
-
-            # Convert RGB to BGR for OpenCV
-            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            writer.write(frame_bgr)
-
-        writer.release()
-        return output_path
 
     def save_frames(
         self,
@@ -1507,72 +1456,6 @@ class OrbitRenderer:
 
         return np.array([w, x, y, z])
 
-    def export_cameras_json(
-        self,
-        camera_data: dict,
-        output_path: str,
-        format: str = "nerfstudio",
-    ) -> str:
-        """
-        Export camera parameters to JSON format.
-
-        Args:
-            camera_data: Output from compute_orbit_cameras().
-            output_path: Path to save JSON file.
-            format: Output format - 'nerfstudio' or 'generic'.
-
-        Returns:
-            Path to saved file.
-        """
-        import json
-
-        def convert_to_json_serializable(obj):
-            """Convert numpy types to Python native types for JSON serialization."""
-            if isinstance(obj, np.ndarray):
-                return obj.tolist()
-            elif isinstance(obj, (np.integer, np.floating)):
-                return obj.item()
-            elif isinstance(obj, dict):
-                return {k: convert_to_json_serializable(v) for k, v in obj.items()}
-            elif isinstance(obj, (list, tuple)):
-                return [convert_to_json_serializable(item) for item in obj]
-            else:
-                return obj
-
-        intrinsics = camera_data["intrinsics"]
-        frames = camera_data["frames"]
-
-        if format == "nerfstudio":
-            # Nerfstudio transforms.json format
-            output = {
-                "camera_model": "PINHOLE",
-                "fl_x": intrinsics["fx"],
-                "fl_y": intrinsics["fy"],
-                "cx": intrinsics["cx"],
-                "cy": intrinsics["cy"],
-                "w": intrinsics["width"],
-                "h": intrinsics["height"],
-                "frames": [
-                    {
-                        "file_path": f.get("frame_filename", f"frame_{f['frame_id']:04d}.png"),
-                        "transform_matrix": f["c2w"],
-                    }
-                    for f in frames
-                ],
-            }
-        else:
-            # Generic format with all data
-            output = camera_data
-
-        # Convert numpy types to JSON-serializable Python types
-        output = convert_to_json_serializable(output)
-
-        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-        with open(output_path, "w") as f:
-            json.dump(output, f, indent=2)
-
-        return output_path
-
     def export_cameras_colmap(
         self,
         camera_data: dict,
@@ -1669,66 +1552,6 @@ class OrbitRenderer:
                             f"{int(color[0])} {int(color[1])} {int(color[2])} 0.0\n")
 
         return output_dir
-
-    def export_cameras_for_plucker(
-        self,
-        camera_data: dict,
-        output_path: str,
-    ) -> str:
-        """
-        Export camera parameters optimized for Plucker coordinate computation.
-
-        For each frame, provides ray origin (camera position) and the
-        camera rotation matrix needed to compute ray directions.
-
-        Plucker coordinates for a ray: (d, m) where d is direction, m = o × d
-        For pixel (u, v): direction = R @ normalize([u-cx, v-cy, f])
-
-        Args:
-            camera_data: Output from compute_orbit_cameras().
-            output_path: Path to save numpy archive.
-
-        Returns:
-            Path to saved file.
-        """
-        intrinsics = camera_data["intrinsics"]
-        frames = camera_data["frames"]
-
-        n_frames = len(frames)
-
-        # Arrays for efficient computation
-        camera_positions = np.zeros((n_frames, 3))
-        camera_rotations = np.zeros((n_frames, 3, 3))
-        c2w_matrices = np.zeros((n_frames, 4, 4))
-        w2c_matrices = np.zeros((n_frames, 4, 4))
-
-        for i, frame in enumerate(frames):
-            camera_positions[i] = frame["camera_position"]
-            camera_rotations[i] = frame["camera_rotation"]
-            c2w_matrices[i] = frame["c2w"]
-            w2c_matrices[i] = frame["w2c"]
-
-        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-        np.savez(
-            output_path,
-            # Intrinsics
-            focal_length=intrinsics["fx"],
-            cx=intrinsics["cx"],
-            cy=intrinsics["cy"],
-            width=intrinsics["width"],
-            height=intrinsics["height"],
-            K=np.array(intrinsics["K"]),
-            # Extrinsics (per frame)
-            camera_positions=camera_positions,
-            camera_rotations=camera_rotations,
-            c2w_matrices=c2w_matrices,
-            w2c_matrices=w2c_matrices,
-            # Metadata
-            n_frames=n_frames,
-            world_centroid=np.array(camera_data["world_centroid"]),
-        )
-
-        return output_path
 
 
 class OrbitVisualization:

@@ -8,61 +8,28 @@ Renders turntable-style animations from SAM-3D-Body estimation outputs,
 with support for mesh, depth, and skeleton visualization modes.
 
 Usage:
-    # From saved estimation output (.npz file)
-    python tools/render_orbit.py --input output.npz --output orbit.mp4
+    # From saved estimation output (.npz file) - save frames to directory
+    python tools/render_orbit.py --input output.npz --output-dir ./frames/
 
     # With skeleton overlay in OpenPose format
-    python tools/render_orbit.py --input output.npz --output orbit.mp4 \
+    python tools/render_orbit.py --input output.npz --output-dir ./frames/ \
         --skeleton --skeleton-format openpose_body25
 
     # Depth map orbit
-    python tools/render_orbit.py --input output.npz --output depth_orbit.mp4 \
-        --mode depth --colormap COLORMAP_INFERNO
+    python tools/render_orbit.py --input output.npz --output-dir ./frames/ \
+        --mode depth
 
-    # Depth map with skeleton overlay
-    python tools/render_orbit.py --input output.npz --output orbit.mp4 \
-        --depth-skeleton --skeleton-format coco
+    # Export COLMAP format (cameras + point cloud)
+    python tools/render_orbit.py --input output.npz --output-dir ./frames/ \
+        --export-colmap ./colmap_sparse/ --pointcloud-samples 50000
 
-    # Auto-framing to fill the viewport
-    python tools/render_orbit.py --input output.npz --output orbit.mp4 --auto-frame
-
-    # Manual zoom control
-    python tools/render_orbit.py --input output.npz --output orbit.mp4 --zoom 1.5
+    # Using a config file
+    python tools/render_orbit.py --config config.yaml
 
     # Run inference and render (requires model checkpoint)
-    python tools/render_orbit.py --image photo.jpg --output orbit.mp4 \
+    python tools/render_orbit.py --image photo.jpg --output-dir ./frames/ \
         --checkpoint ./checkpoints/sam-3d-body-dinov3/model.ckpt \
         --mhr-path ./checkpoints/sam-3d-body-dinov3/assets/mhr_model.pt
-
-    # Save individual frames instead of video
-    python tools/render_orbit.py --input output.npz --output-dir ./frames/ \
-        --save-frames
-
-    # Export camera parameters for 3DGS (nerfstudio format)
-    python tools/render_orbit.py --input output.npz --output orbit.mp4 \
-        --export-cameras transforms.json
-
-    # Export camera parameters and 3D points in COLMAP format
-    python tools/render_orbit.py --input output.npz --output orbit.mp4 \
-        --export-cameras-colmap ./colmap_sparse/
-
-    # Export for Plucker coordinates (numpy format)
-    python tools/render_orbit.py --input output.npz --output orbit.mp4 \
-        --export-cameras-plucker cameras.npz
-
-    # Export point cloud for Gaussian Splatting initialization
-    python tools/render_orbit.py --input output.npz --output orbit.mp4 \
-        --export-pointcloud pointcloud.ply --pointcloud-samples 50000
-
-    # Complete Gaussian Splatting workflow (cameras + point cloud)
-    python tools/render_orbit.py --input output.npz --output orbit.mp4 \
-        --export-cameras transforms.json \
-        --export-pointcloud pointcloud.ply \
-        --pointcloud-samples 50000
-
-    # Match original image framing (frame 0 = same viewpoint as input)
-    python tools/render_orbit.py --input output.npz --output orbit.mp4 \
-        --match-original
 """
 
 import argparse
@@ -81,6 +48,17 @@ if "PYOPENGL_PLATFORM" not in os.environ:
 import numpy as np
 
 
+def load_config(config_path: str) -> dict:
+    """Load configuration from YAML file."""
+    try:
+        import yaml
+    except ImportError:
+        raise ImportError("PyYAML is required for config file support. Install with: pip install pyyaml")
+
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Render orbit animations of 3D body meshes",
@@ -88,7 +66,14 @@ def parse_args():
         epilog=__doc__,
     )
 
-    # Input options (mutually exclusive)
+    # Config file
+    parser.add_argument(
+        "--config",
+        type=str,
+        help="Path to YAML config file (command line args override config file)",
+    )
+
+    # Input options
     input_group = parser.add_argument_group("Input Options")
     input_group.add_argument(
         "--input", "-i",
@@ -120,19 +105,9 @@ def parse_args():
     # Output options
     output_group = parser.add_argument_group("Output Options")
     output_group.add_argument(
-        "--output", "-o",
-        type=str,
-        help="Output video file path (e.g., orbit.mp4)",
-    )
-    output_group.add_argument(
         "--output-dir",
         type=str,
-        help="Output directory for individual frames",
-    )
-    output_group.add_argument(
-        "--save-frames",
-        action="store_true",
-        help="Save individual frames instead of video",
+        help="Output directory for rendered frames (required)",
     )
     output_group.add_argument(
         "--frame-format",
@@ -141,13 +116,6 @@ def parse_args():
         choices=["png", "jpg"],
         help="Format for saved frames (default: png)",
     )
-    output_group.add_argument(
-        "--frame-filename-format",
-        type=str,
-        default="frame_%04d.png",
-        metavar="FORMAT",
-        help='Printf-style format for frame filenames with 1-based indexing (default: "frame_%%04d.png")',
-    )
 
     # Render mode options
     mode_group = parser.add_argument_group("Render Mode")
@@ -155,7 +123,7 @@ def parse_args():
         "--mode",
         type=str,
         default="mesh",
-        choices=["mesh", "depth", "skeleton", "mesh_skeleton", "depth_skeleton", "all"],
+        choices=["mesh", "depth", "mesh_skeleton", "depth_skeleton"],
         help="Render mode (default: mesh)",
     )
     mode_group.add_argument(
@@ -168,11 +136,6 @@ def parse_args():
         action="store_true",
         help="Shortcut to enable depth rendering (sets mode to depth)",
     )
-    mode_group.add_argument(
-        "--depth-skeleton",
-        action="store_true",
-        help="Shortcut for depth with skeleton overlay (sets mode to depth_skeleton)",
-    )
 
     # Skeleton options
     skel_group = parser.add_argument_group("Skeleton Options")
@@ -182,18 +145,6 @@ def parse_args():
         default="mhr70",
         choices=["mhr70", "coco", "openpose_body25", "openpose_body25_hands"],
         help="Skeleton format for visualization (default: mhr70)",
-    )
-    skel_group.add_argument(
-        "--joint-radius",
-        type=float,
-        default=0.015,
-        help="Radius of skeleton joint spheres (default: 0.015)",
-    )
-    skel_group.add_argument(
-        "--bone-radius",
-        type=float,
-        default=0.008,
-        help="Radius of skeleton bone cylinders (default: 0.008)",
     )
 
     # Appearance options
@@ -215,12 +166,6 @@ def parse_args():
         help="Mesh color in 0-1 range (default: 0.65 0.74 0.86)",
     )
     appear_group.add_argument(
-        "--mesh-alpha",
-        type=float,
-        default=0.7,
-        help="Mesh transparency when skeleton is overlaid (default: 0.7)",
-    )
-    appear_group.add_argument(
         "--bg-color",
         type=float,
         nargs=3,
@@ -228,144 +173,68 @@ def parse_args():
         metavar=("R", "G", "B"),
         help="Background color in 0-1 range (default: 1.0 1.0 1.0)",
     )
-    appear_group.add_argument(
-        "--colormap",
-        type=str,
-        default=None,
-        help="OpenCV colormap for depth mode (default: None for grayscale)",
-    )
 
-    # Animation options
-    anim_group = parser.add_argument_group("Animation")
-    anim_group.add_argument(
+    # Camera options
+    camera_group = parser.add_argument_group("Camera")
+    camera_group.add_argument(
         "--n-frames",
         type=int,
         default=36,
         help="Number of frames in orbit (default: 36)",
     )
-    anim_group.add_argument(
-        "--fps",
-        type=int,
-        default=30,
-        help="Frames per second for video output (default: 30)",
-    )
-    anim_group.add_argument(
+    camera_group.add_argument(
         "--elevation",
         type=float,
         default=0.0,
-        help="Base camera elevation angle in degrees for circular mode (default: 0.0)",
+        help="Camera elevation angle in degrees (default: 0.0)",
     )
-    anim_group.add_argument(
+    camera_group.add_argument(
+        "--zoom",
+        type=float,
+        default=None,
+        help="Manual zoom factor (>1 = zoom in, <1 = zoom out). Default: auto-computed",
+    )
+    camera_group.add_argument(
         "--orbit-mode",
         type=str,
         choices=["circular", "sinusoidal", "helical"],
         default="circular",
-        help="Orbit mode: 'circular' for flat rotation, 'sinusoidal' for up/down wave motion, "
-             "'helical' for spiral ascent (default: circular)",
+        help="Orbit mode: 'circular' for flat rotation, 'sinusoidal' for up/down wave, "
+             "'helical' for spiral (default: circular)",
     )
-    anim_group.add_argument(
+    camera_group.add_argument(
         "--swing-amplitude",
         type=float,
         default=30.0,
-        help="Maximum vertical swing in degrees for sinusoidal/helical modes. "
-             "Range is -swing to +swing (default: 30.0, total 60 degree range)",
+        help="Vertical swing in degrees for sinusoidal/helical modes (default: 30.0)",
     )
-    anim_group.add_argument(
+    camera_group.add_argument(
         "--helical-loops",
         type=int,
         default=3,
-        help="Number of complete 360° rotations for helical mode (default: 3)",
+        help="Number of rotations for helical mode (default: 3)",
     )
-    anim_group.add_argument(
+    camera_group.add_argument(
         "--sinusoidal-cycles",
         type=int,
         default=2,
-        help="Number of complete sinusoidal cycles for sinusoidal mode (default: 2)",
-    )
-    anim_group.add_argument(
-        "--start-angle",
-        type=float,
-        default=0.0,
-        help="Starting azimuth angle in degrees (default: 0.0)",
-    )
-    anim_group.add_argument(
-        "--end-angle",
-        type=float,
-        default=360.0,
-        help="Ending azimuth angle in degrees (default: 360.0)",
+        help="Number of cycles for sinusoidal mode (default: 2)",
     )
 
-    # Zoom options
-    zoom_group = parser.add_argument_group("Zoom / Framing")
-    zoom_group.add_argument(
-        "--zoom",
-        type=float,
-        default=None,
-        help="Manual zoom factor (>1 = zoom in, <1 = zoom out)",
-    )
-    zoom_group.add_argument(
-        "--auto-frame",
-        action="store_true",
-        help="Automatically compute zoom to fill viewport",
-    )
-    zoom_group.add_argument(
-        "--fill-ratio",
-        type=float,
-        default=0.8,
-        help="Target fill ratio for auto-frame (0-1, default: 0.8)",
-    )
-    zoom_group.add_argument(
-        "--match-original",
-        action="store_true",
-        help="Match the original image framing. Frame 0 will have the same "
-             "viewpoint as the input image. Uses original focal length and bbox.",
-    )
-
-    # Camera export options
-    camera_group = parser.add_argument_group("Camera Export")
-    camera_group.add_argument(
-        "--export-cameras",
-        type=str,
-        default=None,
-        metavar="PATH",
-        help="Export camera parameters to JSON (nerfstudio transforms.json format)",
-    )
-    camera_group.add_argument(
-        "--export-cameras-colmap",
+    # Export options
+    export_group = parser.add_argument_group("Export (for Gaussian Splatting)")
+    export_group.add_argument(
+        "--export-colmap",
         type=str,
         default=None,
         metavar="DIR",
-        help="Export camera parameters and 3D points in COLMAP format to directory",
+        help="Export cameras and point cloud in COLMAP format to directory",
     )
-    camera_group.add_argument(
-        "--export-cameras-plucker",
-        type=str,
-        default=None,
-        metavar="PATH",
-        help="Export camera parameters for Plucker coordinates (.npz)",
-    )
-    camera_group.add_argument(
-        "--export-cameras-generic",
-        type=str,
-        default=None,
-        metavar="PATH",
-        help="Export all camera data in generic JSON format",
-    )
-
-    # Point cloud export options
-    pointcloud_group = parser.add_argument_group("Point Cloud Export (for Gaussian Splatting)")
-    pointcloud_group.add_argument(
-        "--export-pointcloud",
-        type=str,
-        default=None,
-        metavar="PATH",
-        help="Export point cloud sampled from mesh surface (.ply)",
-    )
-    pointcloud_group.add_argument(
+    export_group.add_argument(
         "--pointcloud-samples",
         type=int,
-        default=10000,
-        help="Number of points to sample on mesh surface (default: 10000)",
+        default=50000,
+        help="Number of points to sample on mesh surface (default: 50000)",
     )
 
     # Other options
@@ -373,31 +242,29 @@ def parse_args():
         "--focal-length",
         type=float,
         default=None,
-        help="Override focal length in pixels. By default, automatically computed for ~47° FOV "
-             "based on render resolution (appropriate for Gaussian Splatting). "
-             "Only needed if you want a specific FOV or are using --match-original.",
+        help="Override focal length in pixels. Default: auto-computed for ~47° FOV",
     )
     parser.add_argument(
         "--quiet", "-q",
         action="store_true",
         help="Suppress progress output",
     )
-    parser.add_argument(
-        "--list-colormaps",
-        action="store_true",
-        help="List available OpenCV colormaps and exit",
-    )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    # Load config file if specified
+    if args.config:
+        config = load_config(args.config)
+        # Set defaults from config file (command line args take precedence)
+        for key, value in config.items():
+            if not hasattr(args, key) or getattr(args, key) is None or (
+                isinstance(getattr(args, key), bool) and not getattr(args, key)
+            ):
+                setattr(args, key, value)
+
+    return args
 
 
-def list_colormaps():
-    """Print available OpenCV colormaps."""
-    import cv2
-    colormaps = [attr for attr in dir(cv2) if attr.startswith("COLORMAP_")]
-    print("Available OpenCV colormaps:")
-    for cm in sorted(colormaps):
-        print(f"  {cm}")
 
 
 def load_estimation_output(path: str) -> dict:
@@ -565,11 +432,6 @@ def run_inference(image_path: str, checkpoint: str, mhr_path: str, person_idx: i
 def main():
     args = parse_args()
 
-    # Handle special options
-    if args.list_colormaps:
-        list_colormaps()
-        return 0
-
     # Validate input options
     if args.input is None and args.image is None:
         print("Error: Must specify either --input or --image")
@@ -580,8 +442,8 @@ def main():
         return 1
 
     # Validate output options
-    if args.output is None and args.output_dir is None:
-        print("Error: Must specify either --output or --output-dir")
+    if args.output_dir is None:
+        print("Error: Must specify --output-dir")
         return 1
 
     # Handle mode shortcuts
@@ -590,8 +452,6 @@ def main():
         mode = "mesh_skeleton"
     if args.depth:
         mode = "depth"
-    if args.depth_skeleton:
-        mode = "depth_skeleton"
 
     # Load or compute estimation output
     if args.input:
@@ -620,24 +480,15 @@ def main():
     vertices = output.get("pred_vertices")
     cam_t = output.get("pred_cam_t")
     keypoints_3d = output.get("pred_keypoints_3d")
-    bbox = output.get("bbox")
-    original_focal_length = output.get("focal_length", 5000.0)
 
-    # Determine focal length:
-    # - If user specifies --focal-length, use that
-    # - If --match-original is set, use the estimated focal length from the input
-    # - Otherwise, derive a sensible focal length from the render resolution
-    #   (we're creating synthetic views, so we control the camera parameters)
+    # Determine focal length
     if args.focal_length is not None:
         focal_length = args.focal_length
-    elif args.match_original:
-        focal_length = original_focal_length
     else:
-        # Derive focal length for a reasonable ~45-50° horizontal FOV
-        # This is appropriate for Gaussian Splatting and most 3D reconstruction
+        # Auto-compute focal length for ~47° FOV (appropriate for Gaussian Splatting)
         import math
         render_width = args.resolution[0]
-        target_fov_deg = 47.0  # Target ~47° horizontal FOV (comfortable viewing angle)
+        target_fov_deg = 47.0
         focal_length = render_width / (2 * math.tan(math.radians(target_fov_deg / 2)))
         if not args.quiet:
             print(f"Auto-computed focal length: {focal_length:.1f} (for {target_fov_deg:.0f}° FOV)")
@@ -646,62 +497,12 @@ def main():
         print("Error: Input missing required fields (pred_vertices, pred_cam_t)")
         return 1
 
-    if mode in ["skeleton", "mesh_skeleton", "depth_skeleton", "all"] and keypoints_3d is None:
+    if mode in ["mesh_skeleton", "depth_skeleton"] and keypoints_3d is None:
         print(f"Warning: Skeleton mode requested but pred_keypoints_3d not found")
-        if mode == "mesh_skeleton":
-            mode = "mesh"
-        elif mode == "depth_skeleton":
-            mode = "depth"
-        elif mode == "skeleton":
-            print("Error: Cannot render skeleton-only without keypoints")
-            return 1
-
-    # Check if --match-original can be used
-    if args.match_original:
-        if bbox is None:
-            print("Warning: --match-original requires bbox in input. Falling back to auto-frame.")
-            args.match_original = False
-            args.auto_frame = True
-        elif not args.quiet:
-            print(f"Match-original mode: using original focal length {focal_length:.1f}")
+        mode = "mesh" if mode == "mesh_skeleton" else "depth"
 
     # Import visualization modules
     from sam_3d_body.visualization import OrbitRenderer
-
-    # Compute FOV for diagnostics and validation
-    render_width = args.resolution[0]
-    render_height = args.resolution[1]
-
-    import math
-    fov_x_deg = math.degrees(2 * math.atan(render_width / (2 * focal_length)))
-    fov_y_deg = math.degrees(2 * math.atan(render_height / (2 * focal_length)))
-
-    # Check if focal length is appropriate for render resolution
-    # Warn only if user explicitly set a problematic value
-    typical_fx_min = render_width * 0.5
-    typical_fx_max = render_width * 2.0
-
-    if (focal_length < typical_fx_min or focal_length > typical_fx_max) and not args.quiet:
-        print("\n" + "=" * 70)
-        print("⚠️  WARNING: Focal length may cause issues")
-        print("=" * 70)
-        print(f"  Focal length:      {focal_length:.1f}")
-        print(f"  Render resolution: {render_width} x {render_height}")
-        print(f"  Resulting FOV:     {fov_x_deg:.1f}° x {fov_y_deg:.1f}°")
-        print()
-
-        if focal_length > typical_fx_max:
-            print("  Very narrow FOV (telephoto lens) - may cause issues with Gaussian Splatting")
-            recommended_fx = render_width / (2 * math.tan(math.radians(25)))
-            print(f"  Consider: --focal-length {recommended_fx:.1f} for ~50° FOV")
-        else:
-            print("  Very wide FOV - may cause distortion issues")
-            recommended_fx = render_width / (2 * math.tan(math.radians(30)))
-            print(f"  Consider: --focal-length {recommended_fx:.1f} for ~60° FOV")
-        print("=" * 70)
-        print()
-    elif not args.quiet:
-        print(f"Focal length: {focal_length:.1f} (FOV: {fov_x_deg:.1f}° x {fov_y_deg:.1f}°)")
 
     # Create renderer
     if not args.quiet:
@@ -711,42 +512,11 @@ def main():
         focal_length=focal_length,
         faces=faces,
         render_res=args.resolution,
-        joint_radius=args.joint_radius,
-        bone_radius=args.bone_radius,
     )
-
-    # Apply original framing if requested
-    if args.match_original and bbox is not None:
-        if not args.quiet:
-            print("Applying original image framing...")
-        vertices = orbit_renderer.apply_original_framing(
-            vertices, cam_t, bbox, original_focal_length
-        )
-        if keypoints_3d is not None:
-            keypoints_3d = orbit_renderer.apply_original_framing(
-                keypoints_3d, cam_t, bbox, original_focal_length
-            )
-
-    # Override angle generation for custom ranges
-    if args.start_angle != 0.0 or args.end_angle != 360.0:
-        original_generate = orbit_renderer.generate_orbit_angles
-        def custom_angles(n_frames, elevation=0.0, start_angle=0.0, end_angle=360.0):
-            return original_generate(
-                n_frames,
-                elevation,
-                args.start_angle,
-                args.end_angle,
-            )
-        orbit_renderer.generate_orbit_angles = custom_angles
 
     # Render based on mode
     if not args.quiet:
         print(f"Rendering {args.n_frames} frames in '{mode}' mode...")
-
-    # When using --match-original, framing is already applied to vertices
-    # so we skip zoom/auto_frame in render_orbit
-    apply_zoom = None if args.match_original else args.zoom
-    apply_auto_frame = False if args.match_original else args.auto_frame
 
     result = orbit_renderer.render_orbit(
         vertices=vertices,
@@ -754,139 +524,24 @@ def main():
         keypoints_3d=keypoints_3d,
         n_frames=args.n_frames,
         elevation=args.elevation,
-        render_mesh=(mode in ["mesh", "mesh_skeleton", "all"]),
-        render_depth=(mode in ["depth", "depth_skeleton", "all"]),
-        render_skeleton=(mode in ["skeleton", "mesh_skeleton", "depth_skeleton", "all"]),
+        render_mesh=(mode in ["mesh", "mesh_skeleton"]),
+        render_depth=(mode in ["depth", "depth_skeleton"]),
+        render_skeleton=(mode in ["mesh_skeleton", "depth_skeleton"]),
         skeleton_format=args.skeleton_format,
         skeleton_overlay=(mode in ["mesh_skeleton", "depth_skeleton"]),
         mesh_color=tuple(args.mesh_color),
-        mesh_alpha=args.mesh_alpha,
         bg_color=tuple(args.bg_color),
-        depth_colormap=args.colormap if mode in ["depth", "depth_skeleton", "all"] else None,
-        zoom=apply_zoom,
-        auto_frame=apply_auto_frame,
-        fill_ratio=args.fill_ratio,
+        zoom=args.zoom,
+        auto_frame=(args.zoom is None),  # Auto-frame if zoom not specified
         orbit_mode=args.orbit_mode,
         swing_amplitude=args.swing_amplitude,
         helical_loops=args.helical_loops,
         sinusoidal_cycles=args.sinusoidal_cycles,
     )
 
-    # Compute camera parameters if we're exporting cameras or saving frames with custom filenames
-    export_any_cameras = (
-        args.export_cameras or args.export_cameras_colmap or
-        args.export_cameras_plucker or args.export_cameras_generic
-    )
-    need_camera_data = export_any_cameras or args.save_frames or args.output_dir
-
-    camera_data = None
-    if need_camera_data:
-        if not args.quiet and export_any_cameras:
-            print("Computing camera parameters...")
-
-        # When using --match-original, vertices are already transformed
-        # so we skip zoom/auto_frame in compute_orbit_cameras
-        camera_data = orbit_renderer.compute_orbit_cameras(
-            vertices=vertices,
-            cam_t=cam_t,
-            n_frames=args.n_frames,
-            elevation=args.elevation,
-            zoom=apply_zoom,
-            auto_frame=apply_auto_frame,
-            fill_ratio=args.fill_ratio,
-            orbit_mode=args.orbit_mode,
-            swing_amplitude=args.swing_amplitude,
-            helical_loops=args.helical_loops,
-            sinusoidal_cycles=args.sinusoidal_cycles,
-            frame_filename_format=args.frame_filename_format,
-        )
-
-    if export_any_cameras:
-        if args.export_cameras:
-            orbit_renderer.export_cameras_json(
-                camera_data, args.export_cameras, format="nerfstudio"
-            )
-            if not args.quiet:
-                print(f"Exported cameras (nerfstudio): {args.export_cameras}")
-
-        if args.export_cameras_generic:
-            orbit_renderer.export_cameras_json(
-                camera_data, args.export_cameras_generic, format="generic"
-            )
-            if not args.quiet:
-                print(f"Exported cameras (generic): {args.export_cameras_generic}")
-
-        if args.export_cameras_plucker:
-            orbit_renderer.export_cameras_for_plucker(camera_data, args.export_cameras_plucker)
-            if not args.quiet:
-                print(f"Exported cameras (Plucker): {args.export_cameras_plucker}")
-
-    # Generate point cloud if requested (for PLY export or COLMAP export)
-    points = None
-    normals = None
-    if args.export_pointcloud or args.export_cameras_colmap:
-        if not args.quiet:
-            print(f"Generating point cloud with {args.pointcloud_samples} samples...")
-
-        # Use transformed vertices from camera_data if available (for COLMAP consistency)
-        # This ensures the point cloud matches the camera coordinate system
-        if camera_data is not None and "transformed_vertices" in camera_data:
-            pc_vertices = camera_data["transformed_vertices"]
-        else:
-            pc_vertices = vertices
-
-        # Handle multi-person case
-        if pc_vertices.ndim == 2:
-            # Single person: vertices is (N, 3)
-            points, normals = sample_points_on_mesh(pc_vertices, faces, args.pointcloud_samples)
-        else:
-            # Multiple people: vertices is (num_people, N, 3)
-            all_points = []
-            all_normals = []
-            num_people = len(pc_vertices)
-            points_per_person = args.pointcloud_samples // num_people
-            remainder = args.pointcloud_samples % num_people
-
-            for i, person_vertices in enumerate(pc_vertices):
-                # Distribute points evenly, with remainder going to first person
-                n_points = points_per_person + (remainder if i == 0 else 0)
-                p, n = sample_points_on_mesh(person_vertices, faces, n_points)
-                all_points.append(p)
-                all_normals.append(n)
-
-            points = np.concatenate(all_points, axis=0)
-            normals = np.concatenate(all_normals, axis=0)
-
-    # Export point cloud in PLY format if requested
-    if args.export_pointcloud and points is not None:
-        export_pointcloud_to_ply(points, normals, args.export_pointcloud)
-        if not args.quiet:
-            print(f"Exported point cloud ({len(points)} points): {args.export_pointcloud}")
-
-    # Export cameras in COLMAP format (with point cloud if available)
-    if args.export_cameras_colmap:
-        # Use default gray color for points (no mesh colors available)
-        point_colors = None
-        if points is not None:
-            point_colors = np.full((len(points), 3), 128, dtype=np.uint8)
-
-        orbit_renderer.export_cameras_colmap(
-            camera_data,
-            args.export_cameras_colmap,
-            points=points,
-            point_colors=point_colors,
-        )
-        if not args.quiet:
-            colmap_msg = f"Exported cameras (COLMAP): {args.export_cameras_colmap}"
-            if points is not None:
-                colmap_msg += f" (with {len(points)} 3D points)"
-            print(colmap_msg)
-
     # Determine which frames to save
     if mode in ["depth", "depth_skeleton"]:
         frames = result.get("depth_frames", [])
-    elif mode == "skeleton" and not args.skeleton:
-        frames = result.get("skeleton_frames", [])
     else:
         frames = result.get("mesh_frames", [])
 
@@ -894,62 +549,71 @@ def main():
         print("Error: No frames were rendered")
         return 1
 
-    # Save output
-    if args.save_frames or args.output_dir:
-        output_dir = args.output_dir or os.path.dirname(args.output) or "."
+    # Save frames
+    if not args.quiet:
+        print(f"Saving {len(frames)} frames to {args.output_dir}")
+
+    paths = orbit_renderer.save_frames(
+        frames,
+        args.output_dir,
+        prefix="frame",
+        format=args.frame_format,
+    )
+    if not args.quiet:
+        print(f"Saved {len(paths)} frames")
+
+    # Export COLMAP if requested
+    if args.export_colmap:
         if not args.quiet:
-            print(f"Saving {len(frames)} frames to {output_dir}")
+            print("Computing camera parameters...")
 
-        # Extract filenames from camera_data if available
-        filenames = None
-        if camera_data is not None:
-            filenames = [f["frame_filename"] for f in camera_data["frames"]]
+        camera_data = orbit_renderer.compute_orbit_cameras(
+            vertices=vertices,
+            cam_t=cam_t,
+            n_frames=args.n_frames,
+            elevation=args.elevation,
+            zoom=args.zoom,
+            auto_frame=(args.zoom is None),
+            orbit_mode=args.orbit_mode,
+            swing_amplitude=args.swing_amplitude,
+            helical_loops=args.helical_loops,
+            sinusoidal_cycles=args.sinusoidal_cycles,
+        )
 
-        paths = orbit_renderer.save_frames(
-            frames,
-            output_dir,
-            prefix="frame",
-            format=args.frame_format,
-            filenames=filenames,
+        if not args.quiet:
+            print(f"Generating point cloud with {args.pointcloud_samples} samples...")
+
+        # Use transformed vertices from camera_data (for COLMAP consistency)
+        pc_vertices = camera_data.get("transformed_vertices", vertices)
+
+        # Handle multi-person case
+        if pc_vertices.ndim == 2:
+            points, normals = sample_points_on_mesh(pc_vertices, faces, args.pointcloud_samples)
+        else:
+            # Multiple people: distribute points evenly
+            all_points = []
+            all_normals = []
+            num_people = len(pc_vertices)
+            points_per_person = args.pointcloud_samples // num_people
+
+            for person_vertices in pc_vertices:
+                p, n = sample_points_on_mesh(person_vertices, faces, points_per_person)
+                all_points.append(p)
+                all_normals.append(n)
+
+            points = np.concatenate(all_points, axis=0)
+            normals = np.concatenate(all_normals, axis=0)
+
+        # Export COLMAP format
+        point_colors = np.full((len(points), 3), 128, dtype=np.uint8)
+        orbit_renderer.export_cameras_colmap(
+            camera_data,
+            args.export_colmap,
+            points=points,
+            point_colors=point_colors,
         )
         if not args.quiet:
-            print(f"Saved {len(paths)} frames")
-
-        # Also save other frame types if mode is "all"
-        if mode == "all":
-            if "depth_frames" in result:
-                orbit_renderer.save_frames(
-                    result["depth_frames"],
-                    os.path.join(output_dir, "depth"),
-                    prefix="depth",
-                    format=args.frame_format,
-                    filenames=filenames,
-                )
-            if "skeleton_frames" in result:
-                orbit_renderer.save_frames(
-                    result["skeleton_frames"],
-                    os.path.join(output_dir, "skeleton"),
-                    prefix="skeleton",
-                    format=args.frame_format,
-                    filenames=filenames,
-                )
-    else:
-        if not args.quiet:
-            print(f"Saving video to {args.output}")
-
-        orbit_renderer.save_video(frames, args.output, fps=args.fps)
-
-        if not args.quiet:
-            print(f"Video saved: {args.output}")
-
-        # Save additional videos if mode is "all"
-        if mode == "all" and args.output:
-            base, ext = os.path.splitext(args.output)
-            if "depth_frames" in result:
-                depth_path = f"{base}_depth{ext}"
-                orbit_renderer.save_video(result["depth_frames"], depth_path, fps=args.fps)
-                if not args.quiet:
-                    print(f"Depth video saved: {depth_path}")
+            print(f"Exported COLMAP: {args.export_colmap} (with {len(points)} 3D points)")
 
     if not args.quiet:
         print("Done!")
