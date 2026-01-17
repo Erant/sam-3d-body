@@ -1388,11 +1388,14 @@ class OrbitRenderer:
             elev_rad = np.radians(actual_elevation)
 
             # Spherical to Cartesian conversion around world_center
-            # x = r * cos(elevation) * sin(azimuth)
+            # The mesh rotates counterclockwise (from above), which appears as rotating
+            # to the right from the camera's perspective. The camera must orbit to the
+            # right (clockwise from above) to maintain the same view.
+            # x = -r * cos(elevation) * sin(azimuth)  (negated for correct handedness)
             # y = r * sin(elevation)
             # z = r * cos(elevation) * cos(azimuth)
             offset = np.array([
-                radius * np.cos(elev_rad) * np.sin(azim_rad),
+                -radius * np.cos(elev_rad) * np.sin(azim_rad),
                 radius * np.sin(elev_rad),
                 radius * np.cos(elev_rad) * np.cos(azim_rad)
             ])
