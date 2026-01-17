@@ -1377,13 +1377,14 @@ class OrbitRenderer:
             elev_rad = np.radians(elev)
 
             # Spherical to Cartesian conversion around world_center
+            # Using convention where azimuth=0 is along -Z axis (front view)
             # x = r * cos(elevation) * sin(azimuth)
             # y = r * sin(elevation)
-            # z = r * cos(elevation) * cos(azimuth)
+            # z = -r * cos(elevation) * cos(azimuth)  (negated for -Z forward)
             offset = np.array([
                 radius * np.cos(elev_rad) * np.sin(azim_rad),
                 radius * np.sin(elev_rad),
-                radius * np.cos(elev_rad) * np.cos(azim_rad)
+                -radius * np.cos(elev_rad) * np.cos(azim_rad)
             ])
             t_c2w = world_center + offset
 
