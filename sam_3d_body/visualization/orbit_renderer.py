@@ -1435,9 +1435,8 @@ class OrbitRenderer:
             # Columns are camera's local axes in world coordinates
             # OpenGL: camera looks down -Z, so +Z points backward (away from view)
             # Since forward_dir points toward center (what we want to look at),
-            # +Z should point AWAY from center, which is -forward_dir... BUT
-            # cameras were pointing outward (180° yaw error), so we use +forward_dir
-            R_c2w = np.column_stack([right, up, forward_dir])
+            # +Z should point AWAY from center, which is -forward_dir
+            R_c2w = np.column_stack([right, up, -forward_dir])
 
             # Build 4x4 matrices
             c2w = np.eye(4)
@@ -1624,14 +1623,34 @@ class OrbitRenderer:
                 name = frame.get("frame_filename", f"frame_{frame['frame_id']:04d}.png")
 
                 # COLMAP uses w2c, convert c2w quaternion to w2c
+                # IMPORTANT: COLMAP uses different coordinate convention than OpenGL!
+                # OpenGL: +X right, +Y up, -Z forward (camera looks down -Z)
+                # COLMAP: +X right, -Y down, +Z forward (camera looks down +Z)
+                # Conversion: Rotate 180° around X axis
+                R_c2w_opengl = np.array(frame["camera_rotation"])
+
+                # Convert from OpenGL to COLMAP convention
+                # This flips Y and Z axes
+                opengl_to_colmap = np.array([
+                    [1,  0,  0],
+                    [0, -1,  0],
+                    [0,  0, -1]
+                ])
+                R_c2w_colmap = R_c2w_opengl @ opengl_to_colmap
+
                 # w2c rotation is inverse of c2w rotation
-                R_c2w = np.array(frame["camera_rotation"])
-                R_w2c = R_c2w.T
+                R_w2c = R_c2w_colmap.T
                 quat_w2c = self._rotation_to_quaternion(R_w2c)
 
-                # w2c translation
-                w2c = np.array(frame["w2c"])
-                t_w2c = w2c[:3, 3]
+                # w2c translation (also needs coordinate conversion)
+                c2w_opengl = np.array(frame["c2w"])
+                t_c2w_opengl = c2w_opengl[:3, 3]
+
+                # Convert translation to COLMAP convention
+                t_c2w_colmap = opengl_to_colmap @ t_c2w_opengl
+
+                # Compute w2c translation
+                t_w2c = -R_w2c @ t_c2w_colmap
 
                 f.write(f"{image_id} {quat_w2c[0]} {quat_w2c[1]} {quat_w2c[2]} "
                         f"{quat_w2c[3]} {t_w2c[0]} {t_w2c[1]} {t_w2c[2]} 1 {name}\n")
@@ -1649,7 +1668,15 @@ class OrbitRenderer:
                 if point_colors is None:
                     point_colors = np.full((len(points), 3), 128, dtype=np.uint8)
 
-                for i, (point, color) in enumerate(zip(points, point_colors)):
+                # Convert points from OpenGL to COLMAP convention
+                opengl_to_colmap = np.array([
+                    [1,  0,  0],
+                    [0, -1,  0],
+                    [0,  0, -1]
+                ])
+                points_colmap = (opengl_to_colmap @ points.T).T
+
+                for i, (point, color) in enumerate(zip(points_colmap, point_colors)):
                     point_id = i + 1
                     # Write: POINT3D_ID X Y Z R G B ERROR TRACK[]
                     # ERROR is 0 since we don't have reprojection error
