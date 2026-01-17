@@ -1433,8 +1433,11 @@ class OrbitRenderer:
 
             # Build camera-to-world rotation matrix
             # Columns are camera's local axes in world coordinates
-            # Camera's +Z is opposite of the looking direction
-            R_c2w = np.column_stack([right, up, -forward_dir])
+            # OpenGL: camera looks down -Z, so +Z points backward (away from view)
+            # Since forward_dir points toward center (what we want to look at),
+            # +Z should point AWAY from center, which is -forward_dir... BUT
+            # cameras were pointing outward (180° yaw error), so we use +forward_dir
+            R_c2w = np.column_stack([right, up, forward_dir])
 
             # Build 4x4 matrices
             c2w = np.eye(4)
