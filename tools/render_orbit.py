@@ -828,19 +828,26 @@ def main():
         if not args.quiet:
             print(f"Generating point cloud with {args.pointcloud_samples} samples...")
 
+        # Use transformed vertices from camera_data if available (for COLMAP consistency)
+        # This ensures the point cloud matches the camera coordinate system
+        if camera_data is not None and "transformed_vertices" in camera_data:
+            pc_vertices = camera_data["transformed_vertices"]
+        else:
+            pc_vertices = vertices
+
         # Handle multi-person case
-        if vertices.ndim == 2:
+        if pc_vertices.ndim == 2:
             # Single person: vertices is (N, 3)
-            points, normals = sample_points_on_mesh(vertices, faces, args.pointcloud_samples)
+            points, normals = sample_points_on_mesh(pc_vertices, faces, args.pointcloud_samples)
         else:
             # Multiple people: vertices is (num_people, N, 3)
             all_points = []
             all_normals = []
-            num_people = len(vertices)
+            num_people = len(pc_vertices)
             points_per_person = args.pointcloud_samples // num_people
             remainder = args.pointcloud_samples % num_people
 
-            for i, person_vertices in enumerate(vertices):
+            for i, person_vertices in enumerate(pc_vertices):
                 # Distribute points evenly, with remainder going to first person
                 n_points = points_per_person + (remainder if i == 0 else 0)
                 p, n = sample_points_on_mesh(person_vertices, faces, n_points)

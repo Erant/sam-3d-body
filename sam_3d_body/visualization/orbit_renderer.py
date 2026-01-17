@@ -1318,6 +1318,8 @@ class OrbitRenderer:
                 - 'camera_position': 3D camera position in world coords
                 - 'camera_rotation': 3x3 rotation matrix (c2w)
                 - 'quaternion_wxyz': quaternion (w, x, y, z) for c2w rotation
+            - 'world_centroid': 3D coordinates of mesh bounding box center
+            - 'transformed_vertices': vertices after auto_frame/zoom transforms
         """
         import trimesh
 
@@ -1470,6 +1472,7 @@ class OrbitRenderer:
             "intrinsics": intrinsics,
             "frames": frames,
             "world_centroid": world_center.tolist(),
+            "transformed_vertices": vertices,  # For point cloud export consistency
         }
 
     def _rotation_to_quaternion(self, R: np.ndarray) -> np.ndarray:
