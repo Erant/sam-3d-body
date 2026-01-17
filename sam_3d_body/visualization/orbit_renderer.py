@@ -1361,24 +1361,33 @@ class OrbitRenderer:
         )
         frames = []
 
+        # Compute initial camera position and its spherical coordinates
+        # This ensures azimuth=0 matches the rendering's unrotated view
+        initial_cam_pos = -cam_t  # Camera position in world coordinates
+        initial_offset = initial_cam_pos - world_center
+        radius = np.linalg.norm(initial_offset)
+
+        # Convert initial offset to spherical coordinates
+        # This gives us the base azimuth/elevation to preserve the initial view
+        base_azimuth = np.degrees(np.arctan2(initial_offset[0], initial_offset[2]))
+        base_elevation = np.degrees(np.arcsin(initial_offset[1] / radius))
+
         for i, (azimuth, elev) in enumerate(zip(azimuth_angles, elevation_angles)):
             # For orbiting camera around static mesh:
             # - Camera orbits around the mesh bounding box center (world_center)
             # - Camera uses spherical coordinates for smooth helical paths
+            # - Azimuth=0 preserves the initial camera position
             # - Camera orientation uses lookAt to always face the mesh center
 
-            # Compute camera position using spherical coordinates around mesh center
-            # This ensures smooth helical paths without self-crossing
-            initial_cam_pos = -cam_t  # Camera position in world coordinates
-            radius = np.linalg.norm(initial_cam_pos - world_center)  # Distance to mesh center
+            # Compute actual spherical angles by adding to base angles
+            actual_azimuth = base_azimuth + azimuth
+            actual_elevation = base_elevation + elev
 
             # Convert angles to radians
-            azim_rad = np.radians(azimuth)
-            elev_rad = np.radians(elev)
+            azim_rad = np.radians(actual_azimuth)
+            elev_rad = np.radians(actual_elevation)
 
             # Spherical to Cartesian conversion around world_center
-            # Using convention where azimuth=0 is along +Z axis (front view)
-            # This matches the rendering convention where azimuth=0 shows the unrotated mesh
             # x = r * cos(elevation) * sin(azimuth)
             # y = r * sin(elevation)
             # z = r * cos(elevation) * cos(azimuth)
