@@ -373,7 +373,9 @@ def parse_args():
         "--focal-length",
         type=float,
         default=None,
-        help="Override focal length (uses value from input if not set)",
+        help="Override focal length in pixels (uses value from input if not set). "
+             "For Gaussian Splatting, use a value appropriate for your render resolution. "
+             "Example: for 512x512 renders, try --focal-length 600 for a ~45° FOV",
     )
     parser.add_argument(
         "--quiet", "-q",
@@ -650,6 +652,52 @@ def main():
 
     # Import visualization modules
     from sam_3d_body.visualization import OrbitRenderer
+
+    # Check focal length and warn if problematic
+    render_width = args.resolution[0]
+    render_height = args.resolution[1]
+
+    # Compute FOV for diagnostics
+    import math
+    fov_x_deg = math.degrees(2 * math.atan(render_width / (2 * focal_length)))
+    fov_y_deg = math.degrees(2 * math.atan(render_height / (2 * focal_length)))
+
+    # Check if focal length is appropriate for render resolution
+    # Typical range: 0.5x to 2.0x image width
+    typical_fx_min = render_width * 0.5
+    typical_fx_max = render_width * 2.0
+
+    if focal_length < typical_fx_min or focal_length > typical_fx_max:
+        if not args.quiet:
+            print("\n" + "=" * 70)
+            print("⚠️  WARNING: Focal length may be inappropriate for render resolution")
+            print("=" * 70)
+            print(f"  Focal length:      {focal_length:.1f}")
+            print(f"  Render resolution: {render_width} x {render_height}")
+            print(f"  Horizontal FOV:    {fov_x_deg:.1f}°")
+            print(f"  Vertical FOV:      {fov_y_deg:.1f}°")
+            print()
+
+            if focal_length > typical_fx_max:
+                print("  This focal length is VERY HIGH, giving an extremely narrow FOV.")
+                print("  This is likely causing Gaussian Splatting to fail!")
+                print()
+                # Suggest appropriate focal length for ~50° FOV
+                recommended_fx = render_width / (2 * math.tan(math.radians(25)))
+                print("  RECOMMENDED FIX:")
+                print(f"  Add this flag: --focal-length {recommended_fx:.1f}")
+                print(f"  This will give a more reasonable ~50° FOV")
+            elif focal_length < typical_fx_min:
+                print("  This focal length is VERY LOW, giving an extremely wide FOV.")
+                print("  This may cause issues with Gaussian Splatting.")
+                print()
+                recommended_fx = render_width / (2 * math.tan(math.radians(30)))
+                print("  RECOMMENDED FIX:")
+                print(f"  Add this flag: --focal-length {recommended_fx:.1f}")
+            print("=" * 70)
+            print()
+    elif not args.quiet:
+        print(f"Focal length: {focal_length:.1f} (FOV: {fov_x_deg:.1f}° x {fov_y_deg:.1f}°)")
 
     # Create renderer
     if not args.quiet:
