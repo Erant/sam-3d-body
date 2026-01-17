@@ -1616,19 +1616,30 @@ class OrbitRenderer:
             f.write("# IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
             f.write("# POINTS2D[] as (X, Y, POINT3D_ID)\n")
 
+            # Rotate cameras 180° around their local Y (up) axis to point inward
+            # The cameras are at correct positions but point outward; this flips them
+            rotate_y_180 = np.array([
+                [-1, 0,  0],
+                [ 0, 1,  0],
+                [ 0, 0, -1]
+            ])
+
             for frame in frames:
                 image_id = frame["frame_id"] + 1
                 name = frame.get("frame_filename", f"frame_{frame['frame_id']:04d}.png")
 
-                # COLMAP uses w2c, convert c2w quaternion to w2c
-                # w2c rotation is inverse of c2w rotation
+                # Get original c2w rotation and camera position
                 R_c2w = np.array(frame["camera_rotation"])
-                R_w2c = R_c2w.T
-                quat_w2c = self._rotation_to_quaternion(R_w2c)
+                camera_pos = np.array(frame["camera_position"])
 
-                # w2c translation
-                w2c = np.array(frame["w2c"])
-                t_w2c = w2c[:3, 3]
+                # Rotate camera 180° around its up axis to flip from outward to inward
+                R_c2w_fixed = R_c2w @ rotate_y_180
+
+                # Compute w2c from the fixed c2w
+                R_w2c = R_c2w_fixed.T
+                t_w2c = -R_w2c @ camera_pos
+
+                quat_w2c = self._rotation_to_quaternion(R_w2c)
 
                 f.write(f"{image_id} {quat_w2c[0]} {quat_w2c[1]} {quat_w2c[2]} "
                         f"{quat_w2c[3]} {t_w2c[0]} {t_w2c[1]} {t_w2c[2]} 1 {name}\n")
