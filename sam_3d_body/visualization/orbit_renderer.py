@@ -1415,16 +1415,15 @@ class OrbitRenderer:
 
             world_up = np.array([0, 1, 0])  # Y-up
 
-            # Right-handed coordinate system: right = up × forward
-            # (NOT forward × up, which gives left!)
+            # Right-handed coordinate system
             # Handle gimbal lock when camera is at north/south pole (forward_dir || world_up)
-            right = np.cross(world_up, forward_dir)
+            right = np.cross(forward_dir, world_up)
             right_norm = np.linalg.norm(right)
 
             if right_norm < 1e-6:  # Camera at pole (looking straight up/down)
                 # Use an alternative up vector
                 world_up = np.array([0, 0, 1])  # Use Z as up reference instead
-                right = np.cross(world_up, forward_dir)
+                right = np.cross(forward_dir, world_up)
                 right_norm = np.linalg.norm(right)
 
             right = right / right_norm
