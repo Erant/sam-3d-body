@@ -1369,7 +1369,8 @@ class OrbitRenderer:
 
         # Convert initial offset to spherical coordinates
         # This gives us the base azimuth/elevation to preserve the initial view
-        base_azimuth = np.degrees(np.arctan2(initial_offset[0], initial_offset[2]))
+        # Note: negate X in arctan2 to match the negated X in forward conversion
+        base_azimuth = np.degrees(np.arctan2(-initial_offset[0], initial_offset[2]))
         base_elevation = np.degrees(np.arcsin(initial_offset[1] / radius))
 
         for i, (azimuth, elev) in enumerate(zip(azimuth_angles, elevation_angles)):
