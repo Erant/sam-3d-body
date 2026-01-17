@@ -373,9 +373,9 @@ def parse_args():
         "--focal-length",
         type=float,
         default=None,
-        help="Override focal length in pixels (uses value from input if not set). "
-             "For Gaussian Splatting, use a value appropriate for your render resolution. "
-             "Example: for 512x512 renders, try --focal-length 600 for a ~45° FOV",
+        help="Override focal length in pixels. By default, automatically computed for ~47° FOV "
+             "based on render resolution (appropriate for Gaussian Splatting). "
+             "Only needed if you want a specific FOV or are using --match-original.",
     )
     parser.add_argument(
         "--quiet", "-q",
@@ -622,7 +622,25 @@ def main():
     keypoints_3d = output.get("pred_keypoints_3d")
     bbox = output.get("bbox")
     original_focal_length = output.get("focal_length", 5000.0)
-    focal_length = args.focal_length or original_focal_length
+
+    # Determine focal length:
+    # - If user specifies --focal-length, use that
+    # - If --match-original is set, use the estimated focal length from the input
+    # - Otherwise, derive a sensible focal length from the render resolution
+    #   (we're creating synthetic views, so we control the camera parameters)
+    if args.focal_length is not None:
+        focal_length = args.focal_length
+    elif args.match_original:
+        focal_length = original_focal_length
+    else:
+        # Derive focal length for a reasonable ~45-50° horizontal FOV
+        # This is appropriate for Gaussian Splatting and most 3D reconstruction
+        import math
+        render_width = args.resolution[0]
+        target_fov_deg = 47.0  # Target ~47° horizontal FOV (comfortable viewing angle)
+        focal_length = render_width / (2 * math.tan(math.radians(target_fov_deg / 2)))
+        if not args.quiet:
+            print(f"Auto-computed focal length: {focal_length:.1f} (for {target_fov_deg:.0f}° FOV)")
 
     if vertices is None or cam_t is None:
         print("Error: Input missing required fields (pred_vertices, pred_cam_t)")
@@ -644,58 +662,44 @@ def main():
             print("Warning: --match-original requires bbox in input. Falling back to auto-frame.")
             args.match_original = False
             args.auto_frame = True
-        else:
-            # Use original focal length for match-original mode
-            focal_length = original_focal_length
-            if not args.quiet:
-                print(f"Using original focal length: {focal_length:.1f}")
+        elif not args.quiet:
+            print(f"Match-original mode: using original focal length {focal_length:.1f}")
 
     # Import visualization modules
     from sam_3d_body.visualization import OrbitRenderer
 
-    # Check focal length and warn if problematic
+    # Compute FOV for diagnostics and validation
     render_width = args.resolution[0]
     render_height = args.resolution[1]
 
-    # Compute FOV for diagnostics
     import math
     fov_x_deg = math.degrees(2 * math.atan(render_width / (2 * focal_length)))
     fov_y_deg = math.degrees(2 * math.atan(render_height / (2 * focal_length)))
 
     # Check if focal length is appropriate for render resolution
-    # Typical range: 0.5x to 2.0x image width
+    # Warn only if user explicitly set a problematic value
     typical_fx_min = render_width * 0.5
     typical_fx_max = render_width * 2.0
 
-    if focal_length < typical_fx_min or focal_length > typical_fx_max:
-        if not args.quiet:
-            print("\n" + "=" * 70)
-            print("⚠️  WARNING: Focal length may be inappropriate for render resolution")
-            print("=" * 70)
-            print(f"  Focal length:      {focal_length:.1f}")
-            print(f"  Render resolution: {render_width} x {render_height}")
-            print(f"  Horizontal FOV:    {fov_x_deg:.1f}°")
-            print(f"  Vertical FOV:      {fov_y_deg:.1f}°")
-            print()
+    if (focal_length < typical_fx_min or focal_length > typical_fx_max) and not args.quiet:
+        print("\n" + "=" * 70)
+        print("⚠️  WARNING: Focal length may cause issues")
+        print("=" * 70)
+        print(f"  Focal length:      {focal_length:.1f}")
+        print(f"  Render resolution: {render_width} x {render_height}")
+        print(f"  Resulting FOV:     {fov_x_deg:.1f}° x {fov_y_deg:.1f}°")
+        print()
 
-            if focal_length > typical_fx_max:
-                print("  This focal length is VERY HIGH, giving an extremely narrow FOV.")
-                print("  This is likely causing Gaussian Splatting to fail!")
-                print()
-                # Suggest appropriate focal length for ~50° FOV
-                recommended_fx = render_width / (2 * math.tan(math.radians(25)))
-                print("  RECOMMENDED FIX:")
-                print(f"  Add this flag: --focal-length {recommended_fx:.1f}")
-                print(f"  This will give a more reasonable ~50° FOV")
-            elif focal_length < typical_fx_min:
-                print("  This focal length is VERY LOW, giving an extremely wide FOV.")
-                print("  This may cause issues with Gaussian Splatting.")
-                print()
-                recommended_fx = render_width / (2 * math.tan(math.radians(30)))
-                print("  RECOMMENDED FIX:")
-                print(f"  Add this flag: --focal-length {recommended_fx:.1f}")
-            print("=" * 70)
-            print()
+        if focal_length > typical_fx_max:
+            print("  Very narrow FOV (telephoto lens) - may cause issues with Gaussian Splatting")
+            recommended_fx = render_width / (2 * math.tan(math.radians(25)))
+            print(f"  Consider: --focal-length {recommended_fx:.1f} for ~50° FOV")
+        else:
+            print("  Very wide FOV - may cause distortion issues")
+            recommended_fx = render_width / (2 * math.tan(math.radians(30)))
+            print(f"  Consider: --focal-length {recommended_fx:.1f} for ~60° FOV")
+        print("=" * 70)
+        print()
     elif not args.quiet:
         print(f"Focal length: {focal_length:.1f} (FOV: {fov_x_deg:.1f}° x {fov_y_deg:.1f}°)")
 

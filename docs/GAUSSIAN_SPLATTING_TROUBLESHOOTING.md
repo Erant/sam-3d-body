@@ -12,7 +12,9 @@ This guide helps diagnose and fix common issues when using SAM-3D-Body outputs f
 
 ### Root Cause: Inappropriate Camera Intrinsics
 
-The most common cause is **focal length being too high** for the render resolution, creating an unrealistic narrow field of view that prevents Gaussian Splatting from optimizing properly.
+This issue was caused by **focal length being too high** for the render resolution in older versions of the tool. This created an unrealistic narrow field of view that prevented Gaussian Splatting from optimizing properly.
+
+**This is now fixed automatically** - the tool derives an appropriate focal length from the render resolution by default.
 
 ### Diagnosis
 
@@ -48,61 +50,89 @@ FOV = 2 * arctan(0.0512) ≈ 5.9°
 
 **Problem**: A 5.9° FOV is extremely narrow (telephoto lens). Gaussian Splatting expects more realistic FOVs of 30-90°.
 
-### Solution: Fix the Focal Length
+### Solution
 
-#### Option 1: Use Appropriate Focal Length (Recommended)
+#### Current Version (Automatic - No Action Needed!)
 
-When running `render_orbit.py`, override the focal length with a value appropriate for your render resolution:
+The tool now automatically computes an appropriate focal length based on your render resolution. Since we're creating synthetic views, we control the camera and can choose sensible defaults.
+
+Simply run without specifying `--focal-length`:
 
 ```bash
-# For 512x512 renders, use focal length around 512-768 (40-60° FOV)
+# No --focal-length needed! It's computed automatically
 python tools/render_orbit.py \
     --input output/person.npz \
     --output orbit.mp4 \
     --export-cameras transforms.json \
     --export-pointcloud pointcloud.ply \
     --pointcloud-samples 50000 \
-    --focal-length 600 \
     --n-frames 100
 ```
 
-**Recommended focal lengths for common resolutions:**
-- 512x512: `--focal-length 600` (~45° FOV)
-- 768x768: `--focal-length 900` (~45° FOV)
-- 1024x1024: `--focal-length 1200` (~45° FOV)
+The tool will output:
+```
+Auto-computed focal length: 598.7 (for 47° FOV)
+Focal length: 598.7 (FOV: 47.0° x 47.0°)
+```
 
-#### Option 2: Increase Render Resolution
+**How it works**: Since we're rendering synthetic views, we control the virtual camera. The tool automatically derives a focal length that gives a comfortable ~47° FOV based on your render resolution.
 
-Alternatively, increase the render resolution to match the high focal length:
+#### Manual Override (Optional)
+
+You can still override if you need a specific FOV:
 
 ```bash
-# If focal length is 5000, render at higher resolution
+# For a wider FOV (~60°)
 python tools/render_orbit.py \
     --input output/person.npz \
-    --output orbit.mp4 \
-    --export-cameras transforms.json \
-    --export-pointcloud pointcloud.ply \
-    --resolution 4000 4000 \
-    --n-frames 100
+    --focal-length 450 \
+    ...
+
+# For a narrower FOV (~35°)
+python tools/render_orbit.py \
+    --input output/person.npz \
+    --focal-length 800 \
+    ...
 ```
 
-**Note**: This requires much more VRAM and processing time.
+#### Using --match-original
 
-#### Option 3: Fix transforms.json Manually
+If you want frame 0 to match your input image's viewpoint exactly, use `--match-original`. This will use the estimated focal length from the original image:
 
-Edit the `transforms.json` file directly:
+```bash
+python tools/render_orbit.py \
+    --input output/person.npz \
+    --match-original \
+    ...
+```
 
+#### Fixing Old Data
+
+If you generated data with an older version that has problematic intrinsics:
+
+**Option 1: Re-generate (Recommended)**
+```bash
+# Just re-run with the latest version - it will use correct defaults
+python tools/render_orbit.py --input output/person.npz ...
+```
+
+**Option 2: Manual Fix**
+
+Edit `transforms.json`:
 ```json
 {
-  "fl_x": 600.0,    // Changed from 5000.0
-  "fl_y": 600.0,    // Changed from 5000.0
+  "fl_x": 598.7,    // Changed from 5000.0
+  "fl_y": 598.7,    // Changed from 5000.0
   "w": 512,
   "h": 512,
   ...
 }
 ```
 
-**Caution**: This may cause misalignment between camera intrinsics and the rendered frames if the frames were rendered with the original focal length.
+**Auto-computed focal lengths for common resolutions:**
+- 512x512: ~599 (47° FOV)
+- 768x768: ~898 (47° FOV)
+- 1024x1024: ~1197 (47° FOV)
 
 ## Understanding Field of View
 
@@ -185,7 +215,7 @@ python demo.py \
     --save_output \
     --output_folder ./output
 
-# Step 2: Generate frames and camera data with correct intrinsics
+# Step 2: Generate frames and camera data (intrinsics computed automatically!)
 python tools/render_orbit.py \
     --input ./output/person.npz \
     --output ./output/orbit.mp4 \
@@ -199,7 +229,6 @@ python tools/render_orbit.py \
     --helical-loops 3 \
     --swing-amplitude 30 \
     --resolution 512 512 \
-    --focal-length 600 \
     --auto-frame
 
 # Step 3: Verify camera parameters
@@ -275,21 +304,29 @@ python tools/render_orbit.py \
 
 ## Frequently Asked Questions
 
-### Q: Why is the default focal length 5000?
+### Q: Do I need to specify --focal-length?
 
-A: The focal length from SAM-3D-Body estimation is computed for the original image or crop, which may be high resolution. This value isn't automatically scaled when rendering at a different resolution.
+A: **No!** The tool automatically computes an appropriate focal length based on your render resolution. Since we're creating synthetic views, we control the camera and choose sensible defaults (~47° FOV).
+
+### Q: What if I used an older version with wrong focal length?
+
+A: Just re-run `render_orbit.py` with the latest version. It will automatically use the correct focal length. Alternatively, you can manually edit the focal length values in `transforms.json`.
 
 ### Q: Should I use --match-original?
 
-A: Use `--match-original` only if you want frame 0 to match the exact viewpoint of your input image. For Gaussian Splatting training datasets, it's usually better to use `--auto-frame` instead.
+A: Use `--match-original` only if you want frame 0 to match the exact viewpoint of your input image. For typical Gaussian Splatting training datasets, the default auto-computed focal length is better.
 
-### Q: What's the difference between --focal-length and the estimated focal length?
+### Q: What focal length is being used?
 
-A: SAM-3D-Body estimates the focal length of the original input image. The `--focal-length` flag overrides this with a value appropriate for your render resolution.
+A: The tool prints the focal length and FOV when you run it:
+```
+Auto-computed focal length: 598.7 (for 47° FOV)
+Focal length: 598.7 (FOV: 47.0° x 47.0°)
+```
 
 ### Q: Can I change the focal length after rendering frames?
 
-A: You can edit `transforms.json` to change the intrinsics, but this may cause misalignment if the frames were rendered with different intrinsics. It's better to re-render with the correct focal length.
+A: You can edit `transforms.json` to change the intrinsics, but this will cause misalignment since the frames were rendered with different intrinsics. Always re-render instead.
 
 ### Q: How many frames do I need for Gaussian Splatting?
 
