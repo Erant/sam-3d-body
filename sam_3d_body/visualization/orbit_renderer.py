@@ -131,6 +131,8 @@ class OrbitRenderer:
         swing_amplitude: float = 30.0,
         helical_loops: int = 3,
         sinusoidal_cycles: int = 2,
+        helical_lead_in: float = 45.0,
+        helical_lead_out: float = 45.0,
     ) -> Tuple[List[float], List[float]]:
         """
         Generate rotation angles for orbit animation.
@@ -144,10 +146,10 @@ class OrbitRenderer:
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
                            Total range is -swing_amplitude to +swing_amplitude.
             helical_loops: Number of complete 360° rotations for helical mode.
-                          Note: Helical mode includes an implicit extra 90° turn,
-                          starting 45° before start_angle and ending 45° after the
-                          final loop, providing better feature exposure for Gaussian Splatting.
             sinusoidal_cycles: Number of complete sinusoidal cycles for sinusoidal mode.
+            helical_lead_in: Degrees to start before start_angle in helical mode (default: 45.0).
+            helical_lead_out: Degrees to continue after final loop in helical mode (default: 45.0).
+                            Total extra rotation = helical_lead_in + helical_lead_out.
 
         Returns:
             Tuple of (azimuth_angles, elevation_angles) lists in degrees.
@@ -157,13 +159,14 @@ class OrbitRenderer:
 
         # Generate azimuth angles based on mode
         if orbit_mode == "helical":
-            # Multiple rotations over the entire sequence + implicit 90° extra turn
+            # Multiple rotations over the entire sequence + lead-in/lead-out
             # This gives better exposure to important features for Gaussian Splatting
-            # For N loops: starts at -45°, performs N full turns, ends at 45°
-            total_rotation = 360.0 * helical_loops + 90.0
+            # Starts helical_lead_in degrees before start_angle, performs N full turns,
+            # and continues helical_lead_out degrees after
+            total_rotation = 360.0 * helical_loops + helical_lead_in + helical_lead_out
             azimuth_angles = np.linspace(
-                start_angle - 45.0,
-                start_angle - 45.0 + total_rotation,
+                start_angle - helical_lead_in,
+                start_angle - helical_lead_in + total_rotation,
                 n_frames,
                 endpoint=False
             ).tolist()
@@ -457,6 +460,8 @@ class OrbitRenderer:
         swing_amplitude: float = 30.0,
         helical_loops: int = 3,
         sinusoidal_cycles: int = 2,
+        helical_lead_in: float = 45.0,
+        helical_lead_out: float = 45.0,
     ) -> List[np.ndarray]:
         """
         Render mesh orbit animation.
@@ -475,6 +480,8 @@ class OrbitRenderer:
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
             helical_loops: Number of complete rotations for helical mode.
             sinusoidal_cycles: Number of complete sinusoidal cycles for sinusoidal mode.
+            helical_lead_in: Degrees to start before start_angle in helical mode (default: 45.0).
+            helical_lead_out: Degrees to continue after final loop in helical mode (default: 45.0).
 
         Returns:
             List of RGB image arrays, each (H, W, 3) with values 0-1.
@@ -488,6 +495,8 @@ class OrbitRenderer:
             swing_amplitude=swing_amplitude,
             helical_loops=helical_loops,
             sinusoidal_cycles=sinusoidal_cycles,
+            helical_lead_in=helical_lead_in,
+            helical_lead_out=helical_lead_out,
         )
         frames = []
 
@@ -593,6 +602,8 @@ class OrbitRenderer:
         swing_amplitude: float = 30.0,
         helical_loops: int = 3,
         sinusoidal_cycles: int = 2,
+        helical_lead_in: float = 45.0,
+        helical_lead_out: float = 45.0,
     ) -> List[np.ndarray]:
         """
         Render depth orbit animation.
@@ -626,6 +637,8 @@ class OrbitRenderer:
             swing_amplitude=swing_amplitude,
             helical_loops=helical_loops,
             sinusoidal_cycles=sinusoidal_cycles,
+            helical_lead_in=helical_lead_in,
+            helical_lead_out=helical_lead_out,
         )
         frames = []
 
@@ -686,6 +699,8 @@ class OrbitRenderer:
         swing_amplitude: float = 30.0,
         helical_loops: int = 3,
         sinusoidal_cycles: int = 2,
+        helical_lead_in: float = 45.0,
+        helical_lead_out: float = 45.0,
     ) -> List[np.ndarray]:
         """
         Render skeleton-only orbit animation.
@@ -717,6 +732,8 @@ class OrbitRenderer:
             swing_amplitude=swing_amplitude,
             helical_loops=helical_loops,
             sinusoidal_cycles=sinusoidal_cycles,
+            helical_lead_in=helical_lead_in,
+            helical_lead_out=helical_lead_out,
         )
         frames = []
 
@@ -780,6 +797,8 @@ class OrbitRenderer:
         swing_amplitude: float = 30.0,
         helical_loops: int = 3,
         sinusoidal_cycles: int = 2,
+        helical_lead_in: float = 45.0,
+        helical_lead_out: float = 45.0,
     ) -> List[np.ndarray]:
         """
         Render mesh with skeleton overlay orbit animation.
@@ -814,6 +833,8 @@ class OrbitRenderer:
             swing_amplitude=swing_amplitude,
             helical_loops=helical_loops,
             sinusoidal_cycles=sinusoidal_cycles,
+            helical_lead_in=helical_lead_in,
+            helical_lead_out=helical_lead_out,
         )
         frames = []
 
@@ -895,6 +916,8 @@ class OrbitRenderer:
         swing_amplitude: float = 30.0,
         helical_loops: int = 3,
         sinusoidal_cycles: int = 2,
+        helical_lead_in: float = 45.0,
+        helical_lead_out: float = 45.0,
     ) -> List[np.ndarray]:
         """
         Render depth map with skeleton overlay orbit animation.
@@ -928,6 +951,8 @@ class OrbitRenderer:
             swing_amplitude=swing_amplitude,
             helical_loops=helical_loops,
             sinusoidal_cycles=sinusoidal_cycles,
+            helical_lead_in=helical_lead_in,
+            helical_lead_out=helical_lead_out,
         )
         frames = []
 
@@ -1036,6 +1061,8 @@ class OrbitRenderer:
         swing_amplitude: float = 30.0,
         helical_loops: int = 3,
         sinusoidal_cycles: int = 2,
+        helical_lead_in: float = 45.0,
+        helical_lead_out: float = 45.0,
         # Output
         output_path: Optional[str] = None,
         fps: int = 30,
@@ -1099,6 +1126,8 @@ class OrbitRenderer:
                     swing_amplitude=swing_amplitude,
                     helical_loops=helical_loops,
                     sinusoidal_cycles=sinusoidal_cycles,
+                    helical_lead_in=helical_lead_in,
+                    helical_lead_out=helical_lead_out,
                 )
             else:
                 result["mesh_frames"] = self.render_orbit_mesh(
@@ -1115,6 +1144,8 @@ class OrbitRenderer:
                     swing_amplitude=swing_amplitude,
                     helical_loops=helical_loops,
                     sinusoidal_cycles=sinusoidal_cycles,
+                    helical_lead_in=helical_lead_in,
+                    helical_lead_out=helical_lead_out,
                 )
 
         # Depth rendering
@@ -1136,6 +1167,8 @@ class OrbitRenderer:
                     swing_amplitude=swing_amplitude,
                     helical_loops=helical_loops,
                     sinusoidal_cycles=sinusoidal_cycles,
+                    helical_lead_in=helical_lead_in,
+                    helical_lead_out=helical_lead_out,
                 )
             else:
                 result["depth_frames"] = self.render_orbit_depth(
@@ -1151,6 +1184,8 @@ class OrbitRenderer:
                     swing_amplitude=swing_amplitude,
                     helical_loops=helical_loops,
                     sinusoidal_cycles=sinusoidal_cycles,
+                    helical_lead_in=helical_lead_in,
+                    helical_lead_out=helical_lead_out,
                 )
 
         # Skeleton-only rendering
@@ -1284,6 +1319,8 @@ class OrbitRenderer:
         swing_amplitude: float = 30.0,
         helical_loops: int = 3,
         sinusoidal_cycles: int = 2,
+        helical_lead_in: float = 45.0,
+        helical_lead_out: float = 45.0,
         frame_filename_format: str = "frame_%04d.png",
     ) -> dict:
         """
@@ -1365,6 +1402,8 @@ class OrbitRenderer:
             swing_amplitude=swing_amplitude,
             helical_loops=helical_loops,
             sinusoidal_cycles=sinusoidal_cycles,
+            helical_lead_in=helical_lead_in,
+            helical_lead_out=helical_lead_out,
         )
         frames = []
 

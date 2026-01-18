@@ -283,6 +283,18 @@ def parse_args():
         help="Number of complete sinusoidal cycles for sinusoidal mode (default: 2)",
     )
     anim_group.add_argument(
+        "--helical-lead-in",
+        type=float,
+        default=45.0,
+        help="Degrees to start before start_angle in helical mode (default: 45.0)",
+    )
+    anim_group.add_argument(
+        "--helical-lead-out",
+        type=float,
+        default=45.0,
+        help="Degrees to continue after final loop in helical mode (default: 45.0)",
+    )
+    anim_group.add_argument(
         "--start-angle",
         type=float,
         default=0.0,
@@ -770,6 +782,8 @@ def main():
         swing_amplitude=args.swing_amplitude,
         helical_loops=args.helical_loops,
         sinusoidal_cycles=args.sinusoidal_cycles,
+        helical_lead_in=args.helical_lead_in,
+        helical_lead_out=args.helical_lead_out,
     )
 
     # Compute camera parameters if we're exporting cameras or saving frames with custom filenames
@@ -798,6 +812,8 @@ def main():
             swing_amplitude=args.swing_amplitude,
             helical_loops=args.helical_loops,
             sinusoidal_cycles=args.sinusoidal_cycles,
+            helical_lead_in=args.helical_lead_in,
+            helical_lead_out=args.helical_lead_out,
             frame_filename_format=args.frame_filename_format,
         )
 
