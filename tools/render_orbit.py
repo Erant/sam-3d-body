@@ -273,6 +273,21 @@ def parse_args():
 
     # Load config file if specified
     if args.config:
+        import sys
+
+        def was_arg_provided(arg_name):
+            """Check if an argument was provided on the command line."""
+            # Convert to CLI format: 'n_frames' -> '--n-frames'
+            cli_name = '--' + arg_name.replace('_', '-')
+            # Also check short forms
+            short_forms = {
+                'input': '-i',
+                'output_dir': '-o',
+                'resolution': '-r',
+                'quiet': '-q',
+            }
+            return cli_name in sys.argv or short_forms.get(arg_name, '') in sys.argv
+
         config = load_config(args.config)
         # Set defaults from config file (command line args take precedence)
         # Normalize config keys: convert hyphens to underscores to match argparse
@@ -284,9 +299,8 @@ def parse_args():
                 # Skip keys that don't correspond to arguments
                 continue
 
-            current_value = getattr(args, normalized_key)
-            # Set from config if not already set by command line
-            if current_value is None or (isinstance(current_value, bool) and not current_value):
+            # Set from config if not provided on command line
+            if not was_arg_provided(normalized_key):
                 setattr(args, normalized_key, value)
 
     return args
