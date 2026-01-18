@@ -1,0 +1,44 @@
+# Example configuration for render_orbit.py
+# You can use this file with: python tools/render_orbit.py --config config.yaml
+# Command line arguments will override values in this file
+
+# Input
+input: "output.npz"  # Path to saved estimation output
+# image: "photo.jpg"  # Alternative: use image + checkpoint + mhr-path
+# checkpoint: "./checkpoints/sam-3d-body/model.ckpt"
+# mhr-path: "./checkpoints/sam-3d-body/assets/mhr_model.pt"
+person-idx: 0
+
+# Output
+output-dir: "./frames"  # Required: directory for rendered frames
+frame-format: "png"  # png or jpg
+
+# Render mode
+mode: "mesh"  # mesh, depth, mesh_skeleton, depth_skeleton
+# skeleton: false  # Shortcut for mesh_skeleton
+# depth: false  # Shortcut for depth
+
+# Skeleton options
+skeleton-format: "mhr70"  # mhr70, coco, openpose_body25, openpose_body25_hands
+
+# Appearance
+resolution: [512, 512]  # [width, height]
+mesh-color: [0.65, 0.74, 0.86]  # RGB in 0-1 range
+bg-color: [1.0, 1.0, 1.0]  # RGB in 0-1 range
+
+# Camera
+n-frames: 36  # Number of frames in orbit
+elevation: 0.0  # Camera elevation in degrees
+# zoom: null  # Manual zoom (null = auto-computed)
+orbit-mode: "circular"  # circular, sinusoidal, helical
+swing-amplitude: 30.0  # For sinusoidal/helical modes
+helical-loops: 3  # For helical mode
+sinusoidal-cycles: 2  # For sinusoidal mode
+
+# Export for Gaussian Splatting
+# export-colmap: "./colmap_sparse"  # Export COLMAP format
+pointcloud-samples: 50000  # Number of points in point cloud
+
+# Other
+# focal-length: null  # Override focal length (null = auto-computed)
+quiet: false  # Suppress progress output
