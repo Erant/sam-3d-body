@@ -275,11 +275,19 @@ def parse_args():
     if args.config:
         config = load_config(args.config)
         # Set defaults from config file (command line args take precedence)
+        # Normalize config keys: convert hyphens to underscores to match argparse
         for key, value in config.items():
-            if not hasattr(args, key) or getattr(args, key) is None or (
-                isinstance(getattr(args, key), bool) and not getattr(args, key)
-            ):
-                setattr(args, key, value)
+            # Convert hyphenated keys to underscored (e.g., 'mhr-path' -> 'mhr_path')
+            normalized_key = key.replace('-', '_')
+
+            if not hasattr(args, normalized_key):
+                # Skip keys that don't correspond to arguments
+                continue
+
+            current_value = getattr(args, normalized_key)
+            # Set from config if not already set by command line
+            if current_value is None or (isinstance(current_value, bool) and not current_value):
+                setattr(args, normalized_key, value)
 
     return args
 

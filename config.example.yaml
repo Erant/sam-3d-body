@@ -1,17 +1,20 @@
 # Example configuration for render_orbit.py
 # You can use this file with: python tools/render_orbit.py --config config.yaml
 # Command line arguments will override values in this file
+#
+# Note: You can use either hyphens or underscores in keys (e.g., 'mhr-path' or 'mhr_path')
 
 # Input
 input: "output.npz"  # Path to saved estimation output
-# image: "photo.jpg"  # Alternative: use image + checkpoint + mhr-path
+# image: "photo.jpg"  # Alternative: use image + checkpoint + mhr_path
 # checkpoint: "./checkpoints/sam-3d-body/model.ckpt"
-# mhr-path: "./checkpoints/sam-3d-body/assets/mhr_model.pt"
-person-idx: 0
+# mhr_path: "./checkpoints/sam-3d-body/assets/mhr_model.pt"  # or 'mhr-path'
+person_idx: 0  # or 'person-idx'
 
 # Output
 output-dir: "./frames"  # Required: directory for rendered frames
 frame-format: "png"  # png or jpg
+frame-filename-format: "frame_%04d.png"  # Printf-style format (1-based indexing)
 
 # Render mode
 mode: "mesh"  # mesh, depth, mesh_skeleton, depth_skeleton
@@ -33,6 +36,8 @@ elevation: 0.0  # Camera elevation in degrees
 orbit-mode: "circular"  # circular, sinusoidal, helical
 swing-amplitude: 30.0  # For sinusoidal/helical modes
 helical-loops: 3  # For helical mode
+helical-lead-in: 45.0  # Degrees to start before start angle (helical mode)
+helical-lead-out: 45.0  # Degrees to continue after final loop (helical mode)
 sinusoidal-cycles: 2  # For sinusoidal mode
 
 # Export for Gaussian Splatting
