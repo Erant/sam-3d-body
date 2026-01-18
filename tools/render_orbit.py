@@ -19,9 +19,9 @@ Usage:
     python tools/render_orbit.py --input output.npz --output-dir ./frames/ \
         --mode depth
 
-    # Export COLMAP format (cameras + point cloud)
+    # COLMAP format (cameras + point cloud) is always exported to output-dir
     python tools/render_orbit.py --input output.npz --output-dir ./frames/ \
-        --export-colmap ./colmap_sparse/ --pointcloud-samples 50000
+        --pointcloud-samples 50000
 
     # Using a config file
     python tools/render_orbit.py --config config.yaml
@@ -242,13 +242,6 @@ def parse_args():
 
     # Export options
     export_group = parser.add_argument_group("Export (for Gaussian Splatting)")
-    export_group.add_argument(
-        "--export-colmap",
-        type=str,
-        default=None,
-        metavar="DIR",
-        help="Export cameras and point cloud in COLMAP format to directory",
-    )
     export_group.add_argument(
         "--pointcloud-samples",
         type=int,
@@ -592,36 +585,32 @@ def main():
         print("Error: No frames were rendered")
         return 1
 
-    # Compute camera data if needed (for custom filenames or COLMAP export)
-    camera_data = None
-    if args.export_colmap or args.frame_filename_format != "frame_%04d.png":
-        if not args.quiet:
-            print("Computing camera parameters...")
+    # Compute camera parameters and generate point cloud for COLMAP export
+    if not args.quiet:
+        print("Computing camera parameters...")
 
-        camera_data = orbit_renderer.compute_orbit_cameras(
-            vertices=vertices,
-            cam_t=cam_t,
-            n_frames=args.n_frames,
-            elevation=args.elevation,
-            zoom=args.zoom,
-            auto_frame=(args.zoom is None),
-            orbit_mode=args.orbit_mode,
-            swing_amplitude=args.swing_amplitude,
-            helical_loops=args.helical_loops,
-            sinusoidal_cycles=args.sinusoidal_cycles,
-            helical_lead_in=args.helical_lead_in,
-            helical_lead_out=args.helical_lead_out,
-            frame_filename_format=args.frame_filename_format,
-        )
+    camera_data = orbit_renderer.compute_orbit_cameras(
+        vertices=vertices,
+        cam_t=cam_t,
+        n_frames=args.n_frames,
+        elevation=args.elevation,
+        zoom=args.zoom,
+        auto_frame=(args.zoom is None),
+        orbit_mode=args.orbit_mode,
+        swing_amplitude=args.swing_amplitude,
+        helical_loops=args.helical_loops,
+        sinusoidal_cycles=args.sinusoidal_cycles,
+        helical_lead_in=args.helical_lead_in,
+        helical_lead_out=args.helical_lead_out,
+        frame_filename_format=args.frame_filename_format,
+    )
 
     # Save frames
     if not args.quiet:
         print(f"Saving {len(frames)} frames to {args.output_dir}")
 
-    # Extract filenames from camera_data if available
-    filenames = None
-    if camera_data is not None:
-        filenames = [f["frame_filename"] for f in camera_data["frames"]]
+    # Extract filenames from camera_data
+    filenames = [f["frame_filename"] for f in camera_data["frames"]]
 
     paths = orbit_renderer.save_frames(
         frames,
@@ -633,43 +622,41 @@ def main():
     if not args.quiet:
         print(f"Saved {len(paths)} frames")
 
-    # Export COLMAP if requested
-    if args.export_colmap:
+    # Generate point cloud for COLMAP export
+    if not args.quiet:
+        print(f"Generating point cloud with {args.pointcloud_samples} samples...")
 
-        if not args.quiet:
-            print(f"Generating point cloud with {args.pointcloud_samples} samples...")
+    # Use transformed vertices from camera_data (for COLMAP consistency)
+    pc_vertices = camera_data.get("transformed_vertices", vertices)
 
-        # Use transformed vertices from camera_data (for COLMAP consistency)
-        pc_vertices = camera_data.get("transformed_vertices", vertices)
+    # Handle multi-person case
+    if pc_vertices.ndim == 2:
+        points, normals = sample_points_on_mesh(pc_vertices, faces, args.pointcloud_samples)
+    else:
+        # Multiple people: distribute points evenly
+        all_points = []
+        all_normals = []
+        num_people = len(pc_vertices)
+        points_per_person = args.pointcloud_samples // num_people
 
-        # Handle multi-person case
-        if pc_vertices.ndim == 2:
-            points, normals = sample_points_on_mesh(pc_vertices, faces, args.pointcloud_samples)
-        else:
-            # Multiple people: distribute points evenly
-            all_points = []
-            all_normals = []
-            num_people = len(pc_vertices)
-            points_per_person = args.pointcloud_samples // num_people
+        for person_vertices in pc_vertices:
+            p, n = sample_points_on_mesh(person_vertices, faces, points_per_person)
+            all_points.append(p)
+            all_normals.append(n)
 
-            for person_vertices in pc_vertices:
-                p, n = sample_points_on_mesh(person_vertices, faces, points_per_person)
-                all_points.append(p)
-                all_normals.append(n)
+        points = np.concatenate(all_points, axis=0)
+        normals = np.concatenate(all_normals, axis=0)
 
-            points = np.concatenate(all_points, axis=0)
-            normals = np.concatenate(all_normals, axis=0)
-
-        # Export COLMAP format
-        point_colors = np.full((len(points), 3), 128, dtype=np.uint8)
-        orbit_renderer.export_cameras_colmap(
-            camera_data,
-            args.export_colmap,
-            points=points,
-            point_colors=point_colors,
-        )
-        if not args.quiet:
-            print(f"Exported COLMAP: {args.export_colmap} (with {len(points)} 3D points)")
+    # Export COLMAP format to output directory
+    point_colors = np.full((len(points), 3), 128, dtype=np.uint8)
+    orbit_renderer.export_cameras_colmap(
+        camera_data,
+        args.output_dir,
+        points=points,
+        point_colors=point_colors,
+    )
+    if not args.quiet:
+        print(f"Exported COLMAP sparse reconstruction to {args.output_dir} ({len(points)} 3D points)")
 
     if not args.quiet:
         print("Done!")

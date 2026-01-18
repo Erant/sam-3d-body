@@ -40,8 +40,7 @@ helical-lead-in: 45.0  # Degrees to start before start angle (helical mode)
 helical-lead-out: 45.0  # Degrees to continue after final loop (helical mode)
 sinusoidal-cycles: 2  # For sinusoidal mode
 
-# Export for Gaussian Splatting
-# export-colmap: "./colmap_sparse"  # Export COLMAP format
+# Gaussian Splatting export (COLMAP format always exported to output-dir)
 pointcloud-samples: 50000  # Number of points in point cloud
 
 # Other
