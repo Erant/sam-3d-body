@@ -116,6 +116,13 @@ def parse_args():
         choices=["png", "jpg"],
         help="Format for saved frames (default: png)",
     )
+    output_group.add_argument(
+        "--frame-filename-format",
+        type=str,
+        default="frame_%04d.png",
+        metavar="FORMAT",
+        help='Printf-style format for frame filenames with 1-based indexing (default: "frame_%%04d.png")',
+    )
 
     # Render mode options
     mode_group = parser.add_argument_group("Render Mode")
@@ -563,21 +570,9 @@ def main():
         print("Error: No frames were rendered")
         return 1
 
-    # Save frames
-    if not args.quiet:
-        print(f"Saving {len(frames)} frames to {args.output_dir}")
-
-    paths = orbit_renderer.save_frames(
-        frames,
-        args.output_dir,
-        prefix="frame",
-        format=args.frame_format,
-    )
-    if not args.quiet:
-        print(f"Saved {len(paths)} frames")
-
-    # Export COLMAP if requested
-    if args.export_colmap:
+    # Compute camera data if needed (for custom filenames or COLMAP export)
+    camera_data = None
+    if args.export_colmap or args.frame_filename_format != "frame_%04d.png":
         if not args.quiet:
             print("Computing camera parameters...")
 
@@ -594,7 +589,30 @@ def main():
             sinusoidal_cycles=args.sinusoidal_cycles,
             helical_lead_in=args.helical_lead_in,
             helical_lead_out=args.helical_lead_out,
+            frame_filename_format=args.frame_filename_format,
         )
+
+    # Save frames
+    if not args.quiet:
+        print(f"Saving {len(frames)} frames to {args.output_dir}")
+
+    # Extract filenames from camera_data if available
+    filenames = None
+    if camera_data is not None:
+        filenames = [f["frame_filename"] for f in camera_data["frames"]]
+
+    paths = orbit_renderer.save_frames(
+        frames,
+        args.output_dir,
+        prefix="frame",
+        format=args.frame_format,
+        filenames=filenames,
+    )
+    if not args.quiet:
+        print(f"Saved {len(paths)} frames")
+
+    # Export COLMAP if requested
+    if args.export_colmap:
 
         if not args.quiet:
             print(f"Generating point cloud with {args.pointcloud_samples} samples...")
