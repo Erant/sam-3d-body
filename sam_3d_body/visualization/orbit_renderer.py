@@ -144,6 +144,9 @@ class OrbitRenderer:
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
                            Total range is -swing_amplitude to +swing_amplitude.
             helical_loops: Number of complete 360° rotations for helical mode.
+                          Note: Helical mode includes an implicit extra 90° turn,
+                          starting 45° before start_angle and ending 45° after the
+                          final loop, providing better feature exposure for Gaussian Splatting.
             sinusoidal_cycles: Number of complete sinusoidal cycles for sinusoidal mode.
 
         Returns:
@@ -154,11 +157,13 @@ class OrbitRenderer:
 
         # Generate azimuth angles based on mode
         if orbit_mode == "helical":
-            # Multiple rotations over the entire sequence
-            total_rotation = 360.0 * helical_loops
+            # Multiple rotations over the entire sequence + implicit 90° extra turn
+            # This gives better exposure to important features for Gaussian Splatting
+            # For N loops: starts at -45°, performs N full turns, ends at 45°
+            total_rotation = 360.0 * helical_loops + 90.0
             azimuth_angles = np.linspace(
-                start_angle,
-                start_angle + total_rotation,
+                start_angle - 45.0,
+                start_angle - 45.0 + total_rotation,
                 n_frames,
                 endpoint=False
             ).tolist()
