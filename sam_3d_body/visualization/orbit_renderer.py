@@ -462,6 +462,7 @@ class OrbitRenderer:
         sinusoidal_cycles: int = 2,
         helical_lead_in: float = 45.0,
         helical_lead_out: float = 45.0,
+        include_alpha: bool = False,
     ) -> List[np.ndarray]:
         """
         Render mesh orbit animation.
@@ -482,9 +483,10 @@ class OrbitRenderer:
             sinusoidal_cycles: Number of complete sinusoidal cycles for sinusoidal mode.
             helical_lead_in: Degrees to start before start_angle in helical mode (default: 45.0).
             helical_lead_out: Degrees to continue after final loop in helical mode (default: 45.0).
+            include_alpha: If True, return RGBA with alpha=1 for mesh, alpha=0 for background.
 
         Returns:
-            List of RGB image arrays, each (H, W, 3) with values 0-1.
+            List of image arrays, each (H, W, 3) RGB or (H, W, 4) RGBA with values 0-1.
         """
         import trimesh
 
@@ -544,7 +546,10 @@ class OrbitRenderer:
                 render_res=self.render_res,
             )
 
-            frames.append(frame[:, :, :3])
+            if include_alpha:
+                frames.append(frame[:, :, :4])
+            else:
+                frames.append(frame[:, :, :3])
 
         return frames
 
@@ -604,6 +609,7 @@ class OrbitRenderer:
         sinusoidal_cycles: int = 2,
         helical_lead_in: float = 45.0,
         helical_lead_out: float = 45.0,
+        include_alpha: bool = False,
     ) -> List[np.ndarray]:
         """
         Render depth orbit animation.
@@ -614,7 +620,6 @@ class OrbitRenderer:
             n_frames: Number of frames in orbit.
             elevation: Base elevation angle for circular mode (degrees).
             colormap: OpenCV colormap name or None for grayscale (default: None).
-            colormap: OpenCV colormap name or None for grayscale.
             normalize: Whether to normalize depth values.
             zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
             auto_frame: If True, automatically compute zoom to fill viewport.
@@ -623,10 +628,14 @@ class OrbitRenderer:
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
             helical_loops: Number of complete rotations for helical mode.
             sinusoidal_cycles: Number of complete sinusoidal cycles for sinusoidal mode.
+            include_alpha: If True, add alpha channel (1 for mesh, 0 for background).
 
         Returns:
-            List of depth images. If colormap is set, shape is (H, W, 3) uint8.
-            Otherwise (H, W) float32 grayscale.
+            List of depth images. Shape depends on options:
+            - No colormap, no alpha: (H, W) float32 grayscale
+            - Colormap, no alpha: (H, W, 3) uint8
+            - No colormap, with alpha: (H, W, 2) float32 (depth + alpha)
+            - Colormap, with alpha: (H, W, 4) uint8 (RGB + alpha)
         """
         import trimesh
 
@@ -680,6 +689,19 @@ class OrbitRenderer:
                 normalize=normalize,
                 colormap=colormap,
             )
+
+            if include_alpha:
+                # Compute alpha mask from depth (valid depth > 0)
+                if len(depth.shape) == 2:
+                    # Grayscale depth - alpha where depth > 0
+                    alpha = (depth > 0).astype(depth.dtype)
+                    depth = np.stack([depth, alpha], axis=-1)
+                else:
+                    # Colormap applied (H, W, 3) uint8
+                    # Background is black [0,0,0], valid pixels have color
+                    alpha = (depth.sum(axis=-1) > 0).astype(np.uint8) * 255
+                    depth = np.concatenate([depth, alpha[:, :, np.newaxis]], axis=-1)
+
             frames.append(depth)
 
         return frames
@@ -799,6 +821,7 @@ class OrbitRenderer:
         sinusoidal_cycles: int = 2,
         helical_lead_in: float = 45.0,
         helical_lead_out: float = 45.0,
+        include_alpha: bool = False,
     ) -> List[np.ndarray]:
         """
         Render mesh with skeleton overlay orbit animation.
@@ -820,9 +843,10 @@ class OrbitRenderer:
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
             helical_loops: Number of complete rotations for helical mode.
             sinusoidal_cycles: Number of complete sinusoidal cycles for sinusoidal mode.
+            include_alpha: If True, add alpha channel from mesh (skeleton does not contribute).
 
         Returns:
-            List of RGB image arrays, each (H, W, 3) with values 0-1.
+            List of image arrays, each (H, W, 3) RGB or (H, W, 4) RGBA with values 0-1.
         """
         import trimesh
 
@@ -882,6 +906,7 @@ class OrbitRenderer:
             rotated_kpts = (rot_matrix @ centered_kpts.T).T
             final_kpts = rotated_kpts + rotation_center
 
+            # Render mesh with skeleton overlay
             frame = self.skeleton_renderer.render_mesh_with_skeleton(
                 final_verts,
                 self.faces,
@@ -895,6 +920,22 @@ class OrbitRenderer:
                 mesh_alpha=mesh_alpha,
                 bg_color=bg_color,
             )
+
+            if include_alpha:
+                # Render mesh-only to get alpha mask (skeleton should not contribute)
+                mesh_rgba = self.mesh_renderer.render_rgba(
+                    final_verts,
+                    cam_t=cam_t,
+                    rot_axis=[1, 0, 0],
+                    rot_angle=0,
+                    mesh_base_color=mesh_color,
+                    scene_bg_color=bg_color,
+                    render_res=self.render_res,
+                )
+                # Combine RGB from composite with alpha from mesh-only render
+                alpha = mesh_rgba[:, :, 3:4]
+                frame = np.concatenate([frame[:, :, :3], alpha], axis=-1)
+
             frames.append(frame)
 
         return frames
@@ -918,6 +959,7 @@ class OrbitRenderer:
         sinusoidal_cycles: int = 2,
         helical_lead_in: float = 45.0,
         helical_lead_out: float = 45.0,
+        include_alpha: bool = False,
     ) -> List[np.ndarray]:
         """
         Render depth map with skeleton overlay orbit animation.
@@ -938,9 +980,11 @@ class OrbitRenderer:
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
             helical_loops: Number of complete rotations for helical mode.
             sinusoidal_cycles: Number of complete sinusoidal cycles for sinusoidal mode.
+            include_alpha: If True, add alpha channel from depth (skeleton does not contribute).
 
         Returns:
-            List of RGB image arrays with depth background and skeleton overlay.
+            List of image arrays with depth background and skeleton overlay.
+            Shape is (H, W, 3) RGB or (H, W, 4) RGBA with values 0-1.
         """
         import trimesh
 
@@ -1011,6 +1055,15 @@ class OrbitRenderer:
                 colormap=colormap,
             )
 
+            # Compute alpha mask from depth before overlay (skeleton should not contribute)
+            if include_alpha:
+                if len(depth.shape) == 2:
+                    # Grayscale depth
+                    alpha = (depth > 0).astype(np.float32)
+                else:
+                    # Colormap applied - background is black
+                    alpha = (depth.sum(axis=-1) > 0).astype(np.float32)
+
             # Ensure depth is RGB for overlay
             if len(depth.shape) == 2:
                 depth_rgb = np.stack([depth] * 3, axis=-1)
@@ -1030,6 +1083,11 @@ class OrbitRenderer:
                 rot_axis=[1, 0, 0],
                 rot_angle=0,
             )
+
+            if include_alpha:
+                # Add alpha channel from depth (not skeleton)
+                frame = np.concatenate([frame[:, :, :3], alpha[:, :, np.newaxis]], axis=-1)
+
             frames.append(frame)
 
         return frames
@@ -1066,6 +1124,8 @@ class OrbitRenderer:
         # Output
         output_path: Optional[str] = None,
         fps: int = 30,
+        # Alpha channel
+        include_alpha: bool = False,
     ) -> dict:
         """
         Unified orbit rendering with multiple output modes.
@@ -1095,6 +1155,9 @@ class OrbitRenderer:
             sinusoidal_cycles: Number of complete sinusoidal cycles for sinusoidal mode.
             output_path: If set, save video to this path.
             fps: Frames per second for video output.
+            include_alpha: If True, add alpha channel to mesh/depth renders.
+                          Alpha is 1 for mesh pixels, 0 for background.
+                          Skeleton does not contribute to alpha.
 
         Returns:
             Dictionary with keys:
@@ -1128,6 +1191,7 @@ class OrbitRenderer:
                     sinusoidal_cycles=sinusoidal_cycles,
                     helical_lead_in=helical_lead_in,
                     helical_lead_out=helical_lead_out,
+                    include_alpha=include_alpha,
                 )
             else:
                 result["mesh_frames"] = self.render_orbit_mesh(
@@ -1146,6 +1210,7 @@ class OrbitRenderer:
                     sinusoidal_cycles=sinusoidal_cycles,
                     helical_lead_in=helical_lead_in,
                     helical_lead_out=helical_lead_out,
+                    include_alpha=include_alpha,
                 )
 
         # Depth rendering
@@ -1169,6 +1234,7 @@ class OrbitRenderer:
                     sinusoidal_cycles=sinusoidal_cycles,
                     helical_lead_in=helical_lead_in,
                     helical_lead_out=helical_lead_out,
+                    include_alpha=include_alpha,
                 )
             else:
                 result["depth_frames"] = self.render_orbit_depth(
@@ -1186,6 +1252,7 @@ class OrbitRenderer:
                     sinusoidal_cycles=sinusoidal_cycles,
                     helical_lead_in=helical_lead_in,
                     helical_lead_out=helical_lead_out,
+                    include_alpha=include_alpha,
                 )
 
         # Skeleton-only rendering
