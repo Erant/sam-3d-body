@@ -5,14 +5,17 @@ This document describes the orbit rendering and camera export system built on to
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [What We Built](#what-we-built)
-3. [Frameworks and Dependencies](#frameworks-and-dependencies)
-4. [Coordinate Systems](#coordinate-systems)
-5. [Critical Lessons Learned](#critical-lessons-learned)
-6. [Current Implementation Issues](#current-implementation-issues)
-7. [Proposed Clean Architecture](#proposed-clean-architecture)
-8. [File Format Specifications](#file-format-specifications)
-9. [Implementation Checklist](#implementation-checklist)
+2. [Input Specification](#input-specification)
+3. [Output Specification](#output-specification)
+4. [Required Functionality](#required-functionality)
+5. [Configuration Options](#configuration-options)
+6. [Canonical Coordinate System](#canonical-coordinate-system)
+7. [Frameworks and Dependencies](#frameworks-and-dependencies)
+8. [Critical Lessons Learned](#critical-lessons-learned)
+9. [Current Implementation Issues](#current-implementation-issues)
+10. [Proposed Clean Architecture](#proposed-clean-architecture)
+11. [File Format Specifications](#file-format-specifications)
+12. [Implementation Checklist](#implementation-checklist)
 
 ---
 
@@ -36,6 +39,464 @@ Gaussian Splatting requires:
 - An initial point cloud (optional but helpful)
 
 All of these must be in a consistent coordinate system. The fundamental challenge is that **rendering libraries and COLMAP use different coordinate conventions**, and the original renderer was designed for visualization, not for generating training data.
+
+---
+
+## Input Specification
+
+This tool is designed as a **standalone system** that takes SAM-3D-Body output as input. It does NOT include SAM-3D-Body itself.
+
+### Input File Format
+
+The input is an `.npz` file saved from SAM-3D-Body's `process_one_image()` output.
+
+**How SAM-3D-Body saves output:**
+```python
+# After running SAM-3D-Body inference
+outputs = estimator.process_one_image(image)
+person_output = outputs[person_idx]
+
+# Save for our tool
+np.savez('estimation.npz',
+    pred_vertices=person_output['pred_vertices'],
+    pred_cam_t=person_output['pred_cam_t'],
+    pred_keypoints_3d=person_output['pred_keypoints_3d'],
+    focal_length=person_output['focal_length'],
+    bbox=person_output['bbox'],
+    faces=estimator.faces,  # CRITICAL: must include mesh faces
+)
+```
+
+### Required Fields
+
+| Field | Type | Shape | Description |
+|-------|------|-------|-------------|
+| `pred_vertices` | float32 | (10475, 3) | Mesh vertex positions in SAM-3D-Body coordinates |
+| `pred_cam_t` | float32 | (3,) | Camera translation that positions mesh in front of camera |
+| `faces` | int32/int64 | (20908, 3) | Mesh face indices (triangles) |
+
+### Optional Fields
+
+| Field | Type | Shape | Description |
+|-------|------|-------|-------------|
+| `pred_keypoints_3d` | float32 | (N, 3) | 3D joint positions for skeleton rendering. N=70 for MHR format |
+| `focal_length` | float32 | scalar | Original focal length from estimation (informational) |
+| `bbox` | float32 | (4,) | Bounding box [x1, y1, x2, y2] from detection (informational) |
+| `pred_keypoints_2d` | float32 | (N, 2) | 2D keypoint projections (informational) |
+| `global_rot` | float32 | (3, 3) | Global rotation matrix (informational) |
+| `body_pose_params` | float32 | varies | SMPL-X body pose parameters (informational) |
+| `shape_params` | float32 | (10,) | SMPL-X shape parameters (informational) |
+
+### Vertex and Face Counts
+
+The mesh uses the SMPL-X body model:
+- **Vertices**: 10,475 points
+- **Faces**: 20,908 triangles
+
+The face array defines how vertices connect to form the mesh surface. This is constant for SMPL-X and must be included in the input file.
+
+### Coordinate System of Input
+
+SAM-3D-Body outputs are in a specific coordinate system:
+- **Origin**: Roughly at the body's pelvis
+- **Y-axis**: Points upward (head direction)
+- **Z-axis**: Points toward the camera (forward from body)
+- **X-axis**: Points to the body's left (right-hand rule)
+
+The `pred_cam_t` vector (typically `[~0, ~0, ~5]`) translates the mesh so it appears in front of a camera at the origin. The Z component is the approximate distance from camera to subject.
+
+### Skeleton Formats
+
+If skeleton rendering is enabled, joint positions follow these formats:
+
+| Format | Joints | Description |
+|--------|--------|-------------|
+| `mhr70` | 70 | Full MHR skeleton including hands and face |
+| `coco` | 17 | Standard COCO body keypoints |
+| `openpose_body25` | 25 | OpenPose body-only skeleton |
+| `openpose_body25_hands` | 65 | OpenPose body + hand keypoints |
+
+---
+
+## Output Specification
+
+### Rendered Images
+
+Output images are saved to the specified output directory:
+
+| File Pattern | Format | Description |
+|--------------|--------|-------------|
+| `frame_0001.png` ... `frame_NNNN.png` | PNG (RGBA) | Rendered frames with alpha channel |
+
+**Image properties:**
+- Resolution: Configurable (default 512×512)
+- Color depth: 8-bit per channel
+- Alpha channel: 1.0 where mesh is rendered, 0.0 for background
+- Color space: sRGB
+
+**Filename format is configurable** via `--frame-filename-format`. Uses 1-based indexing with printf-style format string (e.g., `frame_%04d.png`).
+
+### COLMAP Sparse Reconstruction
+
+Camera parameters and point cloud are exported in COLMAP text format:
+
+```
+output_dir/
+├── cameras.txt      # Camera intrinsics
+├── images.txt       # Camera extrinsics per frame
+├── points3D.txt     # Initial point cloud from mesh
+└── frame_0001.png   # Rendered images
+└── frame_0002.png
+└── ...
+```
+
+See [File Format Specifications](#file-format-specifications) for detailed format descriptions.
+
+### Point Cloud
+
+The initial point cloud is sampled from the mesh surface:
+- **Default samples**: 50,000 points
+- **Sampling method**: Uniform surface sampling via trimesh
+- **Colors**: Gray (128, 128, 128) by default
+- **Format**: Included in `points3D.txt`
+
+---
+
+## Required Functionality
+
+### Core Rendering Modes
+
+The system must support these rendering modes:
+
+1. **Mesh Rendering**
+   - Render textured/colored mesh with lighting
+   - Configurable mesh color (RGB, 0-1 range)
+   - Configurable background color
+   - Alpha channel output (mesh = 1, background = 0)
+
+2. **Depth Rendering**
+   - Render depth buffer as image
+   - Optional normalization to 0-1 range
+   - Optional colormap application
+   - Alpha channel from depth validity
+
+3. **Skeleton Rendering**
+   - Render 3D skeleton as spheres (joints) and cylinders (bones)
+   - Multiple skeleton format support
+   - Configurable joint and bone radii
+   - Standalone or overlay mode
+
+4. **Composite Modes**
+   - Mesh + Skeleton overlay
+   - Depth + Skeleton overlay
+   - Skeleton does NOT contribute to alpha (for masking purposes)
+
+### Orbit Path Patterns
+
+The system must support multiple camera path patterns around the subject:
+
+1. **Circular (Turntable)**
+   - Fixed elevation angle
+   - 360° rotation around vertical axis
+   - Parameters: n_frames, elevation
+
+2. **Sinusoidal**
+   - Single 360° rotation
+   - Elevation oscillates in sine wave pattern
+   - Parameters: n_frames, amplitude, cycles
+
+3. **Helical (Spiral)**
+   - Multiple full rotations
+   - Linear elevation change from bottom to top
+   - Lead-in and lead-out angles for smooth start/end
+   - Best coverage for Gaussian Splatting training
+   - Parameters: n_frames, loops, amplitude, lead_in, lead_out
+
+### Camera Control
+
+1. **Auto-framing**
+   - Automatically compute zoom to fill viewport
+   - Configurable fill ratio (how much of viewport to occupy)
+   - Center subject in frame
+
+2. **Manual zoom**
+   - Override auto-framing with explicit zoom factor
+   - Zoom > 1 = closer, Zoom < 1 = farther
+
+3. **Field of View**
+   - Configurable focal length
+   - Default: computed for ~47° FOV (good for 3DGS)
+
+### Export Functionality
+
+1. **COLMAP Format Export**
+   - cameras.txt with intrinsics
+   - images.txt with per-frame extrinsics
+   - points3D.txt with mesh-sampled point cloud
+   - Proper OpenGL → OpenCV coordinate conversion
+
+2. **Image Export**
+   - PNG with alpha channel
+   - Configurable filename format
+   - 1-based frame indexing
+
+---
+
+## Configuration Options
+
+The current implementation uses command-line arguments and optional YAML config files. In a modular architecture, these would be grouped by component.
+
+### Input/Output Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--input` | path | required | Path to .npz file from SAM-3D-Body |
+| `--output-dir` | path | required | Directory for rendered frames and COLMAP files |
+| `--frame-format` | enum | `png` | Image format: `png` or `jpg` |
+| `--frame-filename-format` | string | `frame_%04d.png` | Printf-style filename format (1-based) |
+
+### Render Mode Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--mode` | enum | `mesh` | Render mode: `mesh`, `depth`, `mesh_skeleton`, `depth_skeleton` |
+| `--skeleton` | flag | false | Shortcut: enable skeleton overlay |
+| `--depth` | flag | false | Shortcut: render depth instead of mesh |
+
+### Appearance Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--resolution` | int[2] | `512 512` | Render resolution (width, height) |
+| `--mesh-color` | float[3] | `0.65 0.74 0.86` | Mesh RGB color (0-1 range) |
+| `--bg-color` | float[3] | `1.0 1.0 1.0` | Background RGB color (0-1 range) |
+
+### Camera Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--focal-length` | float | auto | Focal length in pixels. Auto = ~47° FOV |
+| `--n-frames` | int | `36` | Number of frames in orbit |
+| `--elevation` | float | `0.0` | Base elevation angle in degrees |
+| `--zoom` | float | auto | Zoom factor (>1 closer, <1 farther) |
+
+### Orbit Path Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--orbit-mode` | enum | `circular` | Pattern: `circular`, `sinusoidal`, `helical` |
+| `--swing-amplitude` | float | `30.0` | Elevation swing in degrees (sinusoidal/helical) |
+| `--helical-loops` | int | `3` | Number of full rotations (helical mode) |
+| `--sinusoidal-cycles` | int | `2` | Number of up/down cycles (sinusoidal mode) |
+| `--helical-lead-in` | float | `45.0` | Degrees before first loop (helical mode) |
+| `--helical-lead-out` | float | `45.0` | Degrees after last loop (helical mode) |
+
+### Skeleton Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--skeleton-format` | enum | `mhr70` | Skeleton format: `mhr70`, `coco`, `openpose_body25` |
+| `--joint-radius` | float | `0.015` | Radius of joint spheres (meters) |
+| `--bone-radius` | float | `0.008` | Radius of bone cylinders (meters) |
+
+### Point Cloud Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--pointcloud-samples` | int | `50000` | Number of points to sample on mesh surface |
+
+### Modular Configuration Structure
+
+In a clean architecture, configuration would be grouped by component:
+
+```yaml
+# Example config.yaml for modular architecture
+
+input:
+  path: "estimation.npz"
+
+output:
+  directory: "./output"
+  image_format: "png"
+  filename_pattern: "frame_{index:04d}.png"  # Uses Python format strings
+
+render:
+  resolution: [512, 512]
+  modes: ["mesh"]  # Can specify multiple: ["mesh", "depth"]
+
+  mesh:
+    color: [0.65, 0.74, 0.86]
+    background: [1.0, 1.0, 1.0]
+    include_alpha: true
+
+  depth:
+    normalize: true
+    colormap: null  # or "viridis", "plasma", etc.
+
+  skeleton:
+    enabled: false
+    format: "mhr70"
+    joint_radius: 0.015
+    bone_radius: 0.008
+    overlay: true  # false = render skeleton separately
+
+camera:
+  focal_length: null  # null = auto-compute for 47° FOV
+  auto_frame: true
+  fill_ratio: 0.8
+  zoom: null  # Overrides auto_frame if set
+
+path:
+  type: "helical"  # "circular", "sinusoidal", "helical"
+  n_frames: 120
+
+  # Circular-specific
+  circular:
+    elevation: 0.0
+
+  # Sinusoidal-specific
+  sinusoidal:
+    amplitude: 30.0
+    cycles: 2
+
+  # Helical-specific
+  helical:
+    loops: 3
+    amplitude: 30.0
+    lead_in: 45.0
+    lead_out: 45.0
+
+export:
+  colmap: true
+  pointcloud_samples: 50000
+```
+
+---
+
+## Canonical Coordinate System
+
+To avoid the coordinate system confusion that plagued the original implementation, the new system should adopt a **single canonical coordinate system** used internally, with conversions happening only at system boundaries.
+
+### The Renderer Coordinate System (Canonical)
+
+All internal computations use the **Renderer Coordinate System**:
+
+```
+        +Y (up)
+         |
+         |
+         +---> +X (right)
+        /
+       /
+      +Z (toward viewer / out of screen)
+
+Camera at origin, looking at -Z
+Mesh positioned at negative Z values (in front of camera)
+```
+
+This matches OpenGL conventions used by pyrender. The camera:
+- Is at the origin
+- Looks down the -Z axis
+- Has +Y as up
+- Has +X as right
+
+### Coordinate Conversion Points
+
+Conversions happen at exactly TWO places:
+
+1. **Input Boundary**: SAM-3D-Body → Renderer coordinates
+2. **Output Boundary**: Renderer → COLMAP/OpenCV coordinates
+
+```
+┌─────────────────┐
+│  SAM-3D-Body    │
+│  Input (.npz)   │
+└────────┬────────┘
+         │
+         ▼ sam3d_to_renderer()
+         │
+┌────────┴────────────────────────────────────┐
+│           RENDERER COORDINATE SYSTEM         │
+│                                              │
+│   • Scene (mesh, skeleton)                   │
+│   • Camera positions and orientations        │
+│   • Orbit path calculations                  │
+│   • All internal math                        │
+│                                              │
+└────────┬────────────────────────────────────┘
+         │
+         ▼ renderer_to_colmap()
+         │
+┌────────┴────────┐
+│  COLMAP Output  │
+│  (cameras.txt,  │
+│   images.txt)   │
+└─────────────────┘
+```
+
+### SAM-3D-Body → Renderer Conversion
+
+```python
+def sam3d_to_renderer(vertices, cam_t):
+    """
+    Convert SAM-3D-Body output to renderer coordinates.
+
+    SAM-3D-Body: vertices centered at origin, cam_t positions mesh
+    Renderer: mesh at world position, camera will orbit around it
+
+    Returns mesh vertices in renderer world coordinates.
+    """
+    # Position mesh where it appears in original render
+    positioned_vertices = vertices + cam_t
+
+    # The mesh is now at approximately [0, 0, cam_t[2]]
+    # which is in front of a camera at origin looking at -Z
+    # No additional rotation needed if we define world = renderer coords
+
+    return positioned_vertices
+```
+
+**Key insight**: By using the renderer's coordinate system as our "world," we eliminate the need for the 180° X flip that caused so many issues. The mesh is simply positioned where `cam_t` places it.
+
+### Renderer → COLMAP Conversion
+
+```python
+def renderer_to_colmap(R_c2w, position):
+    """
+    Convert camera pose from renderer (OpenGL) to COLMAP (OpenCV) convention.
+
+    OpenGL: camera looks at -Z, +Y up
+    OpenCV: camera looks at +Z, -Y up (Y points down)
+
+    Returns (quaternion_wxyz, translation) for COLMAP images.txt
+    """
+    # The conversion is a 180° rotation around X
+    opengl_to_opencv = np.array([
+        [1,  0,  0],
+        [0, -1,  0],
+        [0,  0, -1]
+    ])
+
+    # Convert rotation: world-to-camera in OpenCV convention
+    R_w2c = opengl_to_opencv @ R_c2w.T
+
+    # Convert translation
+    t_w2c = -R_w2c @ position
+
+    # Convert rotation matrix to quaternion (w, x, y, z)
+    quat_wxyz = rotation_matrix_to_quaternion(R_w2c)
+
+    return quat_wxyz, t_w2c
+```
+
+### Why This Works
+
+By choosing the renderer's coordinate system as canonical:
+
+1. **No hidden transforms**: The renderer receives vertices directly in world coordinates
+2. **Camera orbit is intuitive**: Spherical coordinates work as expected (Y-up)
+3. **Single conversion point for export**: Only COLMAP export needs coordinate conversion
+4. **Easier debugging**: What you see in the rendered image IS the world coordinate system
 
 ---
 
@@ -101,52 +562,52 @@ Exports camera parameters in COLMAP text format:
 
 ---
 
-## Coordinate Systems
+## Legacy Coordinate System Issues
 
-This is the most critical section. Misunderstanding coordinate systems caused all major bugs.
+This section documents the coordinate system problems in the **original implementation** that we are avoiding in the new design. See [Canonical Coordinate System](#canonical-coordinate-system) for the correct approach.
 
-### The Three Coordinate Systems
+### The Problem: Hidden Transforms
 
-```
-1. SAM-3D-Body Output Space
-   - Vertices centered roughly at origin
-   - Y is up, Z is toward camera
-   - cam_t translates mesh in front of camera (typically [0, 0, ~5])
+The original pyrender-based renderer applies a hidden 180° X rotation:
 
-2. Pyrender/OpenGL Rendering Space
-   - Camera at origin with identity pose
-   - Camera looks down -Z axis
-   - +Y is up in rendered image
-   - Mesh is positioned at: R_x_180 @ (vertices + cam_t)
-   - The 180° X rotation flips Y and Z (see below)
-
-3. COLMAP/OpenCV Space
-   - Camera looks down +Z axis
-   - -Y is up (Y points down in image)
-   - World-to-camera extrinsics: P_cam = R @ P_world + t
+```python
+# Hidden inside vertices_to_trimesh():
+mesh = trimesh.Trimesh(vertices + camera_translation, faces)
+rot = trimesh.transformations.rotation_matrix(np.radians(180), [1, 0, 0])
+mesh.apply_transform(rot)  # This flips Y and Z!
 ```
 
-### The 180° X Rotation
-
-The renderer applies a 180° rotation around X to the mesh:
-
+This transform:
 ```
 R_x_180 = [[1,  0,  0],
            [0, -1,  0],
            [0,  0, -1]]
 ```
 
-This negates Y and Z coordinates. A point at `[x, y, z]` becomes `[x, -y, -z]`.
+Was necessary because SAM-3D-Body outputs have +Z toward camera, but OpenGL cameras look at -Z. The flip puts the mesh in front of the camera.
 
-**Why does the renderer do this?**
-The original SAM-3D-Body output has the mesh with Z pointing toward the camera. But in OpenGL, the camera looks at -Z. To make the mesh visible, it needs to be in front of the camera (negative Z in OpenGL terms). The 180° X rotation accomplishes this while also flipping the mesh orientation to look correct.
+**The problem**: This transform was hidden, not documented, and we had to reverse-engineer it to compute matching camera poses.
 
-### OpenGL to OpenCV Conversion
+### Three Coordinate Systems (Legacy)
 
-When exporting to COLMAP, camera orientations must be converted:
+The old implementation juggled three systems:
+
+1. **SAM-3D-Body Output**: Y-up, Z-toward-camera
+2. **Renderer Internal**: After hidden 180° X flip
+3. **COLMAP Export**: OpenCV convention (Y-down, Z-forward)
+
+Transforms were applied in multiple places, making debugging nearly impossible.
+
+### The Solution
+
+The new architecture uses a **single canonical coordinate system** (see above) with transforms only at system boundaries. The renderer receives mesh vertices directly in world coordinates with no hidden transforms.
+
+### OpenGL vs OpenCV Convention Reference
+
+These conventions remain relevant for COLMAP export:
 
 ```
-OpenGL Camera:     OpenCV Camera:
+OpenGL Camera:     OpenCV/COLMAP Camera:
     +Y (up)            -Y (down)
      |                  |
      |                  |
@@ -156,30 +617,11 @@ OpenGL Camera:     OpenCV Camera:
   -Z (forward)       +Z (forward)
 ```
 
-The conversion is another 180° rotation around X:
-
+The conversion between them is a 180° rotation around X:
 ```
 opengl_to_opencv = [[1,  0,  0],
                     [0, -1,  0],
                     [0,  0, -1]]
-
-R_w2c_opencv = opengl_to_opencv @ R_c2w_opengl.T
-t_w2c_opencv = -R_w2c_opencv @ camera_position
-```
-
-### Coordinate System Diagram
-
-```
-Original SAM-3D-Body:          After R_x_180 flip:
-                               (Rendering coordinate system)
-       +Y (up)                        -Y
-        |                              |
-        |                              |
-        +---> +X                       +---> +X
-       /                              /
-      /                              /
-     +Z (toward camera)             -Z (mesh now in front of
-                                        OpenGL camera looking at -Z)
 ```
 
 ---
