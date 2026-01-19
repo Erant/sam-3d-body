@@ -605,6 +605,92 @@ def main():
         frame_filename_format=args.frame_filename_format,
     )
 
+    # === DIAGNOSTIC OUTPUT ===
+    print("\n" + "=" * 60)
+    print("DIAGNOSTIC: Alignment Debug Information")
+    print("=" * 60)
+
+    # Input data
+    print(f"\n[INPUT DATA]")
+    print(f"  vertices shape: {vertices.shape}")
+    print(f"  vertices min:   [{vertices.min(axis=0)[0]:.4f}, {vertices.min(axis=0)[1]:.4f}, {vertices.min(axis=0)[2]:.4f}]")
+    print(f"  vertices max:   [{vertices.max(axis=0)[0]:.4f}, {vertices.max(axis=0)[1]:.4f}, {vertices.max(axis=0)[2]:.4f}]")
+    verts_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
+    print(f"  vertices center: [{verts_center[0]:.4f}, {verts_center[1]:.4f}, {verts_center[2]:.4f}]")
+    print(f"  cam_t:          [{cam_t[0]:.4f}, {cam_t[1]:.4f}, {cam_t[2]:.4f}]")
+    print(f"  focal_length:   {focal_length:.2f}")
+    print(f"  render_res:     {args.render_res}")
+
+    # Transformed vertices (what COLMAP will use for point cloud)
+    transformed_verts = camera_data.get("transformed_vertices")
+    if transformed_verts is not None:
+        print(f"\n[TRANSFORMED VERTICES (for point cloud)]")
+        print(f"  shape: {transformed_verts.shape}")
+        print(f"  min:   [{transformed_verts.min(axis=0)[0]:.4f}, {transformed_verts.min(axis=0)[1]:.4f}, {transformed_verts.min(axis=0)[2]:.4f}]")
+        print(f"  max:   [{transformed_verts.max(axis=0)[0]:.4f}, {transformed_verts.max(axis=0)[1]:.4f}, {transformed_verts.max(axis=0)[2]:.4f}]")
+        trans_center = (transformed_verts.min(axis=0) + transformed_verts.max(axis=0)) / 2
+        print(f"  center: [{trans_center[0]:.4f}, {trans_center[1]:.4f}, {trans_center[2]:.4f}]")
+
+    # World centroid
+    world_centroid = camera_data.get("world_centroid")
+    if world_centroid is not None:
+        print(f"\n[WORLD CENTROID (camera orbit center)]")
+        print(f"  world_centroid: [{world_centroid[0]:.4f}, {world_centroid[1]:.4f}, {world_centroid[2]:.4f}]")
+
+    # Camera intrinsics
+    intrinsics = camera_data.get("intrinsics", {})
+    print(f"\n[CAMERA INTRINSICS]")
+    print(f"  fx, fy: {intrinsics.get('fx', 'N/A')}, {intrinsics.get('fy', 'N/A')}")
+    print(f"  cx, cy: {intrinsics.get('cx', 'N/A')}, {intrinsics.get('cy', 'N/A')}")
+    print(f"  width x height: {intrinsics.get('width', 'N/A')} x {intrinsics.get('height', 'N/A')}")
+
+    # Camera positions for first few frames
+    camera_frames = camera_data.get("frames", [])
+    print(f"\n[CAMERA POSES (first 3 and last frame)]")
+    frames_to_show = []
+    if len(camera_frames) >= 1:
+        frames_to_show.append((0, camera_frames[0]))
+    if len(camera_frames) >= 2:
+        frames_to_show.append((1, camera_frames[1]))
+    if len(camera_frames) >= 3:
+        frames_to_show.append((2, camera_frames[2]))
+    if len(camera_frames) >= 4:
+        frames_to_show.append((len(camera_frames)-1, camera_frames[-1]))
+
+    for idx, frame in frames_to_show:
+        pos = frame.get("camera_position", [0, 0, 0])
+        azim = frame.get("azimuth", 0)
+        elev = frame.get("elevation", 0)
+        print(f"  Frame {idx}: pos=[{pos[0]:.4f}, {pos[1]:.4f}, {pos[2]:.4f}], azim={azim:.1f}°, elev={elev:.1f}°")
+
+    # Sanity checks
+    print(f"\n[SANITY CHECKS]")
+    if transformed_verts is not None and world_centroid is not None:
+        # Check if world_centroid is at transformed vertices center
+        expected_center = (transformed_verts.min(axis=0) + transformed_verts.max(axis=0)) / 2
+        centroid_diff = np.linalg.norm(np.array(world_centroid) - expected_center)
+        print(f"  world_centroid vs transformed_verts center diff: {centroid_diff:.6f}")
+        if centroid_diff > 0.001:
+            print(f"  WARNING: world_centroid does not match transformed vertices center!")
+
+    if len(camera_frames) >= 1:
+        # Check camera distance to world center
+        cam0_pos = np.array(camera_frames[0].get("camera_position", [0, 0, 0]))
+        if world_centroid is not None:
+            dist_to_center = np.linalg.norm(cam0_pos - np.array(world_centroid))
+            print(f"  Camera 0 distance to world_centroid: {dist_to_center:.4f}")
+
+    # Check if frame 0 camera is at origin (should be after our fix)
+    if len(camera_frames) >= 1:
+        cam0_pos = np.array(camera_frames[0].get("camera_position", [0, 0, 0]))
+        dist_to_origin = np.linalg.norm(cam0_pos)
+        print(f"  Camera 0 distance to origin: {dist_to_origin:.6f}")
+        if dist_to_origin > 0.001:
+            print(f"  NOTE: Camera 0 is NOT at origin (dist={dist_to_origin:.4f})")
+
+    print("=" * 60 + "\n")
+    # === END DIAGNOSTIC OUTPUT ===
+
     # Save frames
     if not args.quiet:
         print(f"Saving {len(frames)} frames to {args.output_dir}")

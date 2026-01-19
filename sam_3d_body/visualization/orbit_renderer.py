@@ -1382,6 +1382,10 @@ class OrbitRenderer:
         """
         import trimesh
 
+        # Store original vertices for debug
+        orig_vertices = vertices.copy()
+        orig_bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
+
         # Apply framing transformations to match rendering
         if auto_frame:
             vertices = self.apply_auto_framing(vertices, cam_t, fill_ratio)
@@ -1389,11 +1393,22 @@ class OrbitRenderer:
             bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
             vertices = self.apply_zoom(vertices, zoom, bbox_center)
 
+        # Store transformed (pre-cam_t) bbox center for debug
+        transformed_bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
+
         # World origin is at the RENDERED mesh bounding box center.
         # The renderer adds cam_t to vertices, so the rendered mesh is at
         # (vertices + cam_t). We need world_center to match this position
         # for proper alignment between point cloud and rendered images.
         world_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2 + cam_t
+
+        # === DEBUG: compute_orbit_cameras internal state ===
+        print(f"\n[compute_orbit_cameras DEBUG]")
+        print(f"  Original vertices bbox center: [{orig_bbox_center[0]:.4f}, {orig_bbox_center[1]:.4f}, {orig_bbox_center[2]:.4f}]")
+        print(f"  cam_t: [{cam_t[0]:.4f}, {cam_t[1]:.4f}, {cam_t[2]:.4f}]")
+        print(f"  auto_frame={auto_frame}, zoom={zoom}")
+        print(f"  Transformed vertices bbox center (pre cam_t): [{transformed_bbox_center[0]:.4f}, {transformed_bbox_center[1]:.4f}, {transformed_bbox_center[2]:.4f}]")
+        print(f"  world_center (= transformed_bbox_center + cam_t): [{world_center[0]:.4f}, {world_center[1]:.4f}, {world_center[2]:.4f}]")
 
         # Intrinsics
         width, height = self.render_res
@@ -1441,6 +1456,11 @@ class OrbitRenderer:
         # Note: negate X and Y to match the negated X and Y in forward conversion
         base_azimuth = np.degrees(np.arctan2(-initial_offset[0], initial_offset[2]))
         base_elevation = np.degrees(np.arcsin(-initial_offset[1] / radius))
+
+        print(f"  initial_cam_pos: [{initial_cam_pos[0]:.4f}, {initial_cam_pos[1]:.4f}, {initial_cam_pos[2]:.4f}]")
+        print(f"  initial_offset (cam_pos - world_center): [{initial_offset[0]:.4f}, {initial_offset[1]:.4f}, {initial_offset[2]:.4f}]")
+        print(f"  radius (orbit distance): {radius:.4f}")
+        print(f"  base_azimuth: {base_azimuth:.2f}°, base_elevation: {base_elevation:.2f}°")
 
         for i, (azimuth, elev) in enumerate(zip(azimuth_angles, elevation_angles)):
             # For orbiting camera around static mesh:
