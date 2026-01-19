@@ -1476,9 +1476,12 @@ class OrbitRenderer:
         print(f"  base_azimuth: {base_azimuth:.2f}°, base_elevation: {base_elevation:.2f}°")
 
         for i, (azimuth, elev) in enumerate(zip(azimuth_angles, elevation_angles)):
-            # Compute actual spherical angles by adding to base angles
-            actual_azimuth = base_azimuth + azimuth
-            actual_elevation = base_elevation + elev
+            # The rendering rotates the MESH by (azimuth, elev) with fixed camera.
+            # For COLMAP, we need camera positions that give the same view of a STATIONARY mesh.
+            # If mesh rotates by +θ, equivalent camera orbits by -θ.
+            # So we negate both angles to get the correct camera position.
+            actual_azimuth = base_azimuth - azimuth
+            actual_elevation = base_elevation - elev
 
             # Convert angles to radians
             azim_rad = np.radians(actual_azimuth)
