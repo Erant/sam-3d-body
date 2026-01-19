@@ -1321,8 +1321,11 @@ class OrbitRenderer:
             bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
             vertices = self.apply_zoom(vertices, zoom, bbox_center)
 
-        # World origin is at mesh bounding box center (matches visual center)
-        world_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
+        # World origin is at the RENDERED mesh bounding box center.
+        # The renderer adds cam_t to vertices, so the rendered mesh is at
+        # (vertices + cam_t). We need world_center to match this position
+        # for proper alignment between point cloud and rendered images.
+        world_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2 + cam_t
 
         # Intrinsics
         width, height = self.render_res
@@ -1357,8 +1360,11 @@ class OrbitRenderer:
         frames = []
 
         # Compute initial camera position and its spherical coordinates
-        # This ensures azimuth=0 matches the rendering's unrotated view
-        initial_cam_pos = -cam_t  # Camera position in world coordinates
+        # This ensures azimuth=0 matches the rendering's unrotated view.
+        # In rendering, camera is at origin, so initial_cam_pos = origin.
+        # (Previously this was -cam_t, but that was relative to un-shifted
+        # world_center. Now that world_center includes cam_t, we use origin.)
+        initial_cam_pos = np.zeros(3)  # Camera at origin in rendered scene
         initial_offset = initial_cam_pos - world_center
         radius = np.linalg.norm(initial_offset)
 
@@ -1465,7 +1471,9 @@ class OrbitRenderer:
             "intrinsics": intrinsics,
             "frames": frames,
             "world_centroid": world_center.tolist(),
-            "transformed_vertices": vertices,  # For point cloud export consistency
+            # Point cloud vertices must include cam_t offset to match rendered mesh position.
+            # The renderer adds cam_t to vertices, so the rendered mesh is at (vertices + cam_t).
+            "transformed_vertices": vertices + cam_t,
         }
 
     def _rotation_to_quaternion(self, R: np.ndarray) -> np.ndarray:
