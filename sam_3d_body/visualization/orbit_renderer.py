@@ -1304,10 +1304,11 @@ class OrbitRenderer:
             if frame.max() <= 1.0:
                 frame = (frame * 255).astype(np.uint8)
 
+            # Convert to BGR/BGRA for OpenCV, preserving alpha if present
             if frame.shape[2] == 4:
-                frame = frame[:, :, :3]
-
-            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGRA)
+            else:
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
             # Use provided filename or generate one
             if filenames is not None and i < len(filenames):
