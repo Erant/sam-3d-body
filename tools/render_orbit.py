@@ -619,7 +619,7 @@ def main():
     print(f"  vertices center: [{verts_center[0]:.4f}, {verts_center[1]:.4f}, {verts_center[2]:.4f}]")
     print(f"  cam_t:          [{cam_t[0]:.4f}, {cam_t[1]:.4f}, {cam_t[2]:.4f}]")
     print(f"  focal_length:   {focal_length:.2f}")
-    print(f"  render_res:     {args.render_res}")
+    print(f"  render_res:     {args.resolution}")
 
     # Transformed vertices (what COLMAP will use for point cloud)
     transformed_verts = camera_data.get("transformed_vertices")
