@@ -1555,13 +1555,70 @@ class OrbitRenderer:
                 "quaternion_wxyz": quat.tolist(),
             })
 
+        # === Apply 180° X flip to match renderer coordinate system ===
+        # The renderer applies a 180° X rotation to the mesh in vertices_to_trimesh(),
+        # which negates Y and Z coordinates. We must apply the same flip to the
+        # point cloud and camera poses for COLMAP to match the rendered images.
+        #
+        # R_x_180 = [[1, 0, 0], [0, -1, 0], [0, 0, -1]]
+        # This flips Y and Z coordinates.
+
+        def flip_x_180(v):
+            """Apply 180° X rotation (negate Y and Z)."""
+            result = v.copy()
+            result[..., 1] *= -1
+            result[..., 2] *= -1
+            return result
+
+        # Flip point cloud vertices to match rendered mesh position
+        flipped_vertices = flip_x_180(vertices + cam_t)
+
+        # Flip world center
+        flipped_world_center = flip_x_180(world_center)
+
+        # Flip camera positions and orientations in all frames
+        for frame in frames:
+            # Flip camera position
+            pos = np.array(frame["camera_position"])
+            flipped_pos = flip_x_180(pos)
+            frame["camera_position"] = flipped_pos.tolist()
+
+            # Flip camera orientation: R_flipped = R_x_180 @ R_c2w
+            # This transforms camera axes to the flipped world coordinate system
+            R_c2w = np.array(frame["camera_rotation"])
+            R_x_180 = np.diag([1.0, -1.0, -1.0])
+            R_flipped = R_x_180 @ R_c2w
+            frame["camera_rotation"] = R_flipped.tolist()
+
+            # Rebuild c2w and w2c matrices with flipped values
+            c2w = np.eye(4)
+            c2w[:3, :3] = R_flipped
+            c2w[:3, 3] = flipped_pos
+            frame["c2w"] = c2w.tolist()
+
+            # w2c is inverse of c2w
+            R_w2c = R_flipped.T
+            t_w2c = -R_flipped.T @ flipped_pos
+            w2c = np.eye(4)
+            w2c[:3, :3] = R_w2c
+            w2c[:3, 3] = t_w2c
+            frame["w2c"] = w2c.tolist()
+
+            # Recompute quaternion for flipped rotation
+            frame["quaternion_wxyz"] = self._rotation_to_quaternion(R_flipped).tolist()
+
+        print(f"\n[180° X FLIP APPLIED]")
+        print(f"  Point cloud center (flipped): [{flipped_vertices.mean(axis=0)[0]:.4f}, {flipped_vertices.mean(axis=0)[1]:.4f}, {flipped_vertices.mean(axis=0)[2]:.4f}]")
+        print(f"  World center (flipped): [{flipped_world_center[0]:.4f}, {flipped_world_center[1]:.4f}, {flipped_world_center[2]:.4f}]")
+        if len(frames) > 0:
+            print(f"  Camera 0 position (flipped): {frames[0]['camera_position']}")
+
         return {
             "intrinsics": intrinsics,
             "frames": frames,
-            "world_centroid": world_center.tolist(),
-            # Point cloud vertices must include cam_t offset to match rendered mesh position.
-            # The renderer adds cam_t to vertices, so the rendered mesh is at (vertices + cam_t).
-            "transformed_vertices": vertices + cam_t,
+            "world_centroid": flipped_world_center.tolist(),
+            # Point cloud with 180° X flip applied to match rendered mesh
+            "transformed_vertices": flipped_vertices,
         }
 
     def _rotation_to_quaternion(self, R: np.ndarray) -> np.ndarray:
