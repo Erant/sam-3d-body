@@ -462,7 +462,7 @@ class OrbitRenderer:
         sinusoidal_cycles: int = 2,
         helical_lead_in: float = 45.0,
         helical_lead_out: float = 45.0,
-        include_alpha: bool = False,
+        include_alpha: bool = True,
     ) -> List[np.ndarray]:
         """
         Render mesh orbit animation.
@@ -609,7 +609,7 @@ class OrbitRenderer:
         sinusoidal_cycles: int = 2,
         helical_lead_in: float = 45.0,
         helical_lead_out: float = 45.0,
-        include_alpha: bool = False,
+        include_alpha: bool = True,
     ) -> List[np.ndarray]:
         """
         Render depth orbit animation.
@@ -821,7 +821,7 @@ class OrbitRenderer:
         sinusoidal_cycles: int = 2,
         helical_lead_in: float = 45.0,
         helical_lead_out: float = 45.0,
-        include_alpha: bool = False,
+        include_alpha: bool = True,
     ) -> List[np.ndarray]:
         """
         Render mesh with skeleton overlay orbit animation.
@@ -959,7 +959,7 @@ class OrbitRenderer:
         sinusoidal_cycles: int = 2,
         helical_lead_in: float = 45.0,
         helical_lead_out: float = 45.0,
-        include_alpha: bool = False,
+        include_alpha: bool = True,
     ) -> List[np.ndarray]:
         """
         Render depth map with skeleton overlay orbit animation.
@@ -1125,7 +1125,7 @@ class OrbitRenderer:
         output_path: Optional[str] = None,
         fps: int = 30,
         # Alpha channel
-        include_alpha: bool = False,
+        include_alpha: bool = True,
     ) -> dict:
         """
         Unified orbit rendering with multiple output modes.
