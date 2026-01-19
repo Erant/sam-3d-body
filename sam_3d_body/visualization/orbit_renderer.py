@@ -291,11 +291,56 @@ class OrbitRenderer:
 
         return transformed
 
+    def _adjust_bbox_for_framing(
+        self,
+        bbox_min: np.ndarray,
+        bbox_max: np.ndarray,
+        auto_frame: Union[bool, str],
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Adjust bounding box based on auto-frame mode.
+
+        Args:
+            bbox_min: Minimum corner of bounding box (3D).
+            bbox_max: Maximum corner of bounding box (3D).
+            auto_frame: Framing mode - True/"body" for full body, "torso" for upper 50%, "bust" for upper 33%.
+
+        Returns:
+            Tuple of (adjusted_bbox_min, adjusted_bbox_max).
+        """
+        # Normalize auto_frame to string
+        if auto_frame is True or auto_frame == "body":
+            # Full body - no adjustment needed
+            return bbox_min, bbox_max
+
+        # For torso and bust, adjust the Y-axis bounds
+        # Assuming mesh is upright with Y-axis as vertical
+        y_min = bbox_min[1]
+        y_max = bbox_max[1]
+        y_range = y_max - y_min
+
+        if auto_frame == "torso":
+            # Upper 50% of the mesh
+            new_y_min = y_min + 0.5 * y_range
+            adjusted_bbox_min = bbox_min.copy()
+            adjusted_bbox_min[1] = new_y_min
+            return adjusted_bbox_min, bbox_max
+        elif auto_frame == "bust":
+            # Upper 33% of the mesh
+            new_y_min = y_min + 0.67 * y_range
+            adjusted_bbox_min = bbox_min.copy()
+            adjusted_bbox_min[1] = new_y_min
+            return adjusted_bbox_min, bbox_max
+        else:
+            # Unknown mode - treat as full body
+            return bbox_min, bbox_max
+
     def compute_auto_framing(
         self,
         vertices: np.ndarray,
         cam_t: np.ndarray,
         fill_ratio: float = 0.8,
+        auto_frame: Union[bool, str] = True,
     ) -> Tuple[float, np.ndarray]:
         """
         Compute zoom and centering offset to auto-frame the mesh in the viewport.
@@ -304,12 +349,20 @@ class OrbitRenderer:
             vertices: Mesh vertices of shape (V, 3).
             cam_t: Camera translation vector.
             fill_ratio: Target ratio of viewport to fill (0-1, default 0.8).
+            auto_frame: Framing mode - True/"body" for full body, "torso" for upper 50%, "bust" for upper 33%.
 
         Returns:
             Tuple of (zoom_factor, center_offset_3d) where:
             - zoom_factor: Scale to apply to vertices (>1 = zoom in)
             - center_offset_3d: 3D offset to add to vertices to center in viewport
         """
+        # Compute full bounding box first
+        bbox_min = vertices.min(axis=0)
+        bbox_max = vertices.max(axis=0)
+
+        # Adjust bounding box based on framing mode
+        bbox_min, bbox_max = self._adjust_bbox_for_framing(bbox_min, bbox_max, auto_frame)
+
         # Compute bounding box in camera space
         verts_cam = vertices + cam_t
 
@@ -346,10 +399,8 @@ class OrbitRenderer:
 
         # Compute 3D offset to center the mesh
         # We need to shift X and Y so bbox center projects to (0, 0)
-        # Use 3D bounding box center (not vertex centroid) for reference depth
+        # Use the adjusted bounding box center for reference depth
         # This gives better visual centering as bbox center matches visual center
-        bbox_min = vertices.min(axis=0)
-        bbox_max = vertices.max(axis=0)
         bbox_center_3d = (bbox_min + bbox_max) / 2
         bbox_center_cam = bbox_center_3d + cam_t
         reference_z = bbox_center_cam[2]
@@ -369,6 +420,7 @@ class OrbitRenderer:
         vertices: np.ndarray,
         cam_t: np.ndarray,
         fill_ratio: float = 0.8,
+        auto_frame: Union[bool, str] = True,
     ) -> float:
         """
         Compute zoom factor to auto-frame the mesh in the viewport.
@@ -377,11 +429,12 @@ class OrbitRenderer:
             vertices: Mesh vertices of shape (V, 3).
             cam_t: Camera translation vector.
             fill_ratio: Target ratio of viewport to fill (0-1, default 0.8).
+            auto_frame: Framing mode - True/"body" for full body, "torso" for upper 50%, "bust" for upper 33%.
 
         Returns:
             Zoom factor to apply to vertices (>1 = zoom in, <1 = zoom out).
         """
-        zoom, _ = self.compute_auto_framing(vertices, cam_t, fill_ratio)
+        zoom, _ = self.compute_auto_framing(vertices, cam_t, fill_ratio, auto_frame)
         return zoom
 
     def apply_zoom(
@@ -416,6 +469,7 @@ class OrbitRenderer:
         vertices: np.ndarray,
         cam_t: np.ndarray,
         fill_ratio: float = 0.8,
+        auto_frame: Union[bool, str] = True,
     ) -> np.ndarray:
         """
         Apply both zoom and centering to auto-frame mesh in viewport.
@@ -424,11 +478,12 @@ class OrbitRenderer:
             vertices: Mesh vertices of shape (V, 3).
             cam_t: Camera translation vector.
             fill_ratio: Target ratio of viewport to fill (0-1, default 0.8).
+            auto_frame: Framing mode - True/"body" for full body, "torso" for upper 50%, "bust" for upper 33%.
 
         Returns:
             Transformed vertices that will be centered and scaled in viewport.
         """
-        zoom, center_offset = self.compute_auto_framing(vertices, cam_t, fill_ratio)
+        zoom, center_offset = self.compute_auto_framing(vertices, cam_t, fill_ratio, auto_frame)
 
         # Use 3D bounding box center (matches visual center better than vertex centroid)
         bbox_min = vertices.min(axis=0)
@@ -454,7 +509,7 @@ class OrbitRenderer:
         mesh_color: Tuple[float, float, float] = (0.65, 0.74, 0.86),
         bg_color: Tuple[float, float, float] = (1.0, 1.0, 1.0),
         zoom: Optional[float] = None,
-        auto_frame: bool = False,
+        auto_frame: Union[bool, str] = False,
         fill_ratio: float = 0.8,
         orbit_mode: str = "circular",
         swing_amplitude: float = 30.0,
@@ -474,7 +529,8 @@ class OrbitRenderer:
             mesh_color: RGB color for mesh (0-1 range).
             bg_color: Background color RGB (0-1 range).
             zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
-            auto_frame: If True, automatically compute zoom to fill viewport.
+            auto_frame: Framing mode - False (no auto-framing), True/"body" (full body),
+                       "torso" (upper 50% of mesh), or "bust" (upper 33% of mesh).
             fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
             orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
@@ -502,7 +558,7 @@ class OrbitRenderer:
 
         # Apply auto-framing (zoom + centering) or manual zoom
         if auto_frame:
-            vertices = self.apply_auto_framing(vertices, cam_t, fill_ratio)
+            vertices = self.apply_auto_framing(vertices, cam_t, fill_ratio, auto_frame)
         elif zoom is not None and zoom != 1.0:
             bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
             vertices = self.apply_zoom(vertices, zoom, bbox_center)
@@ -596,7 +652,7 @@ class OrbitRenderer:
         colormap: Optional[str] = None,
         normalize: bool = True,
         zoom: Optional[float] = None,
-        auto_frame: bool = False,
+        auto_frame: Union[bool, str] = False,
         fill_ratio: float = 0.8,
         orbit_mode: str = "circular",
         swing_amplitude: float = 30.0,
@@ -617,7 +673,8 @@ class OrbitRenderer:
             colormap: OpenCV colormap name or None for grayscale.
             normalize: Whether to normalize depth values.
             zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
-            auto_frame: If True, automatically compute zoom to fill viewport.
+            auto_frame: Framing mode - False (no auto-framing), True/"body" (full body),
+                       "torso" (upper 50% of mesh), or "bust" (upper 33% of mesh).
             fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
             orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
@@ -644,7 +701,7 @@ class OrbitRenderer:
 
         # Apply auto-framing (zoom + centering) or manual zoom
         if auto_frame:
-            vertices = self.apply_auto_framing(vertices, cam_t, fill_ratio)
+            vertices = self.apply_auto_framing(vertices, cam_t, fill_ratio, auto_frame)
         elif zoom is not None and zoom != 1.0:
             bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
             vertices = self.apply_zoom(vertices, zoom, bbox_center)
@@ -693,7 +750,7 @@ class OrbitRenderer:
         skeleton_format: str = "mhr70",
         bg_color: Tuple[float, float, float] = (0.0, 0.0, 0.0),
         zoom: Optional[float] = None,
-        auto_frame: bool = False,
+        auto_frame: Union[bool, str] = False,
         fill_ratio: float = 0.8,
         orbit_mode: str = "circular",
         swing_amplitude: float = 30.0,
@@ -713,7 +770,8 @@ class OrbitRenderer:
             skeleton_format: Skeleton format ('mhr70', 'coco', 'openpose_body25').
             bg_color: Background color RGB (0-1 range).
             zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
-            auto_frame: If True, automatically compute zoom to fill viewport.
+            auto_frame: Framing mode - False (no auto-framing), True/"body" (full body),
+                       "torso" (upper 50% of mesh), or "bust" (upper 33% of mesh).
             fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
             orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
@@ -739,7 +797,7 @@ class OrbitRenderer:
 
         # Apply auto-framing (zoom + centering) or manual zoom
         if auto_frame:
-            keypoints_3d = self.apply_auto_framing(keypoints_3d, cam_t, fill_ratio)
+            keypoints_3d = self.apply_auto_framing(keypoints_3d, cam_t, fill_ratio, auto_frame)
         elif zoom is not None and zoom != 1.0:
             bbox_center = (keypoints_3d.min(axis=0) + keypoints_3d.max(axis=0)) / 2
             keypoints_3d = self.apply_zoom(keypoints_3d, zoom, bbox_center)
@@ -791,7 +849,7 @@ class OrbitRenderer:
         mesh_alpha: float = 0.7,
         bg_color: Tuple[float, float, float] = (1.0, 1.0, 1.0),
         zoom: Optional[float] = None,
-        auto_frame: bool = False,
+        auto_frame: Union[bool, str] = False,
         fill_ratio: float = 0.8,
         orbit_mode: str = "circular",
         swing_amplitude: float = 30.0,
@@ -814,7 +872,8 @@ class OrbitRenderer:
             mesh_alpha: Mesh transparency (0=transparent, 1=opaque).
             bg_color: Background color RGB (0-1 range).
             zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
-            auto_frame: If True, automatically compute zoom to fill viewport.
+            auto_frame: Framing mode - False (no auto-framing), True/"body" (full body),
+                       "torso" (upper 50% of mesh), or "bust" (upper 33% of mesh).
             fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
             orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
@@ -841,7 +900,7 @@ class OrbitRenderer:
         # Apply auto-framing (zoom + centering) or manual zoom
         if auto_frame:
             # Compute framing based on mesh vertices
-            zoom_factor, center_offset = self.compute_auto_framing(vertices, cam_t, fill_ratio)
+            zoom_factor, center_offset = self.compute_auto_framing(vertices, cam_t, fill_ratio, auto_frame)
             bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
             # Apply to both vertices and keypoints
             vertices = vertices + center_offset
@@ -910,7 +969,7 @@ class OrbitRenderer:
         colormap: Optional[str] = None,
         normalize: bool = True,
         zoom: Optional[float] = None,
-        auto_frame: bool = False,
+        auto_frame: Union[bool, str] = False,
         fill_ratio: float = 0.8,
         orbit_mode: str = "circular",
         swing_amplitude: float = 30.0,
@@ -932,7 +991,8 @@ class OrbitRenderer:
             colormap: OpenCV colormap name or None for grayscale (default: None).
             normalize: Whether to normalize depth values.
             zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
-            auto_frame: If True, automatically compute zoom to fill viewport.
+            auto_frame: Framing mode - False (no auto-framing), True/"body" (full body),
+                       "torso" (upper 50% of mesh), or "bust" (upper 33% of mesh).
             fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
             orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
@@ -959,7 +1019,7 @@ class OrbitRenderer:
         # Apply auto-framing (zoom + centering) or manual zoom
         if auto_frame:
             # Compute framing based on mesh vertices
-            zoom_factor, center_offset = self.compute_auto_framing(vertices, cam_t, fill_ratio)
+            zoom_factor, center_offset = self.compute_auto_framing(vertices, cam_t, fill_ratio, auto_frame)
             bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
             # Apply to both vertices and keypoints
             vertices = vertices + center_offset
@@ -1054,7 +1114,7 @@ class OrbitRenderer:
         depth_colormap: Optional[str] = None,
         # Zoom
         zoom: Optional[float] = None,
-        auto_frame: bool = False,
+        auto_frame: Union[bool, str] = False,
         fill_ratio: float = 0.8,
         # Orbit modes
         orbit_mode: str = "circular",
@@ -1087,7 +1147,8 @@ class OrbitRenderer:
             bg_color: Background color RGB (0-1 range).
             depth_colormap: Colormap for depth visualization (default: None for grayscale).
             zoom: Manual zoom factor (>1 = zoom in, <1 = zoom out).
-            auto_frame: If True, automatically compute zoom to fill viewport.
+            auto_frame: Framing mode - False (no auto-framing), True/"body" (full body),
+                       "torso" (upper 50% of mesh), or "bust" (upper 33% of mesh).
             fill_ratio: Target fill ratio for auto_frame (0-1, default 0.8).
             orbit_mode: Orbit mode - 'circular', 'sinusoidal', or 'helical'.
             swing_amplitude: Maximum vertical swing in degrees (for sinusoidal/helical).
@@ -1262,7 +1323,7 @@ class OrbitRenderer:
         n_frames: int = 36,
         elevation: float = 0.0,
         zoom: Optional[float] = None,
-        auto_frame: bool = False,
+        auto_frame: Union[bool, str] = False,
         fill_ratio: float = 0.8,
         orbit_mode: str = "circular",
         swing_amplitude: float = 30.0,
@@ -1316,7 +1377,7 @@ class OrbitRenderer:
 
         # Apply framing transformations to match rendering
         if auto_frame:
-            vertices = self.apply_auto_framing(vertices, cam_t, fill_ratio)
+            vertices = self.apply_auto_framing(vertices, cam_t, fill_ratio, auto_frame)
         elif zoom is not None and zoom != 1.0:
             bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
             vertices = self.apply_zoom(vertices, zoom, bbox_center)

@@ -199,7 +199,15 @@ def parse_args():
         "--zoom",
         type=float,
         default=None,
-        help="Manual zoom factor (>1 = zoom in, <1 = zoom out). Default: auto-computed",
+        help="Manual zoom factor (>1 = zoom in, <1 = zoom out). Overrides --auto-frame",
+    )
+    camera_group.add_argument(
+        "--auto-frame",
+        type=str,
+        default="body",
+        choices=["body", "torso", "bust"],
+        help="Auto-framing mode: 'body' (full body), 'torso' (upper 50%%), 'bust' (upper 33%%) (default: body). "
+             "Ignored if --zoom is specified",
     )
     camera_group.add_argument(
         "--orbit-mode",
@@ -566,7 +574,7 @@ def main():
         mesh_color=tuple(args.mesh_color),
         bg_color=tuple(args.bg_color),
         zoom=args.zoom,
-        auto_frame=(args.zoom is None),  # Auto-frame if zoom not specified
+        auto_frame=False if args.zoom is not None else args.auto_frame,  # Use auto_frame if zoom not specified
         orbit_mode=args.orbit_mode,
         swing_amplitude=args.swing_amplitude,
         helical_loops=args.helical_loops,
@@ -595,7 +603,7 @@ def main():
         n_frames=args.n_frames,
         elevation=args.elevation,
         zoom=args.zoom,
-        auto_frame=(args.zoom is None),
+        auto_frame=False if args.zoom is not None else args.auto_frame,
         orbit_mode=args.orbit_mode,
         swing_amplitude=args.swing_amplitude,
         helical_loops=args.helical_loops,
