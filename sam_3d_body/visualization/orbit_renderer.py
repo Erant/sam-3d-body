@@ -1382,6 +1382,20 @@ class OrbitRenderer:
         """
         import trimesh
 
+        # === Helper function for 180° X flip (negate Y and Z) ===
+        # The renderer applies this to the mesh in vertices_to_trimesh().
+        # We compute everything in this flipped coordinate system.
+        def flip_x_180(v):
+            """Apply 180° X rotation (negate Y and Z)."""
+            result = np.array(v, dtype=np.float64)
+            if result.ndim == 1:
+                result[1] *= -1
+                result[2] *= -1
+            else:
+                result[..., 1] *= -1
+                result[..., 2] *= -1
+            return result
+
         # Store original vertices for debug
         orig_vertices = vertices.copy()
         orig_bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
@@ -1393,22 +1407,24 @@ class OrbitRenderer:
             bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
             vertices = self.apply_zoom(vertices, zoom, bbox_center)
 
-        # Store transformed (pre-cam_t) bbox center for debug
+        # Store transformed (pre-cam_t, pre-flip) bbox center for debug
         transformed_bbox_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2
 
-        # World origin is at the RENDERED mesh bounding box center.
-        # The renderer adds cam_t to vertices, so the rendered mesh is at
-        # (vertices + cam_t). We need world_center to match this position
-        # for proper alignment between point cloud and rendered images.
-        world_center = (vertices.min(axis=0) + vertices.max(axis=0)) / 2 + cam_t
+        # === Apply 180° X flip to match renderer coordinate system ===
+        # The renderer does: R_x_180 @ (vertices + cam_t)
+        # So the point cloud in COLMAP should be at the same position.
+        flipped_vertices = flip_x_180(vertices + cam_t)
+
+        # World center is the bbox center of the flipped point cloud
+        world_center = (flipped_vertices.min(axis=0) + flipped_vertices.max(axis=0)) / 2
 
         # === DEBUG: compute_orbit_cameras internal state ===
         print(f"\n[compute_orbit_cameras DEBUG]")
         print(f"  Original vertices bbox center: [{orig_bbox_center[0]:.4f}, {orig_bbox_center[1]:.4f}, {orig_bbox_center[2]:.4f}]")
         print(f"  cam_t: [{cam_t[0]:.4f}, {cam_t[1]:.4f}, {cam_t[2]:.4f}]")
         print(f"  auto_frame={auto_frame}, zoom={zoom}")
-        print(f"  Transformed vertices bbox center (pre cam_t): [{transformed_bbox_center[0]:.4f}, {transformed_bbox_center[1]:.4f}, {transformed_bbox_center[2]:.4f}]")
-        print(f"  world_center (= transformed_bbox_center + cam_t): [{world_center[0]:.4f}, {world_center[1]:.4f}, {world_center[2]:.4f}]")
+        print(f"  Transformed vertices bbox center (pre cam_t, pre flip): [{transformed_bbox_center[0]:.4f}, {transformed_bbox_center[1]:.4f}, {transformed_bbox_center[2]:.4f}]")
+        print(f"  Flipped point cloud bbox center: [{world_center[0]:.4f}, {world_center[1]:.4f}, {world_center[2]:.4f}]")
 
         # Intrinsics
         width, height = self.render_res
@@ -1442,33 +1458,24 @@ class OrbitRenderer:
         )
         frames = []
 
-        # Compute initial camera position and its spherical coordinates
-        # This ensures azimuth=0 matches the rendering's unrotated view.
-        # In rendering, camera is at origin, so initial_cam_pos = origin.
-        # (Previously this was -cam_t, but that was relative to un-shifted
-        # world_center. Now that world_center includes cam_t, we use origin.)
-        initial_cam_pos = np.zeros(3)  # Camera at origin in rendered scene
+        # Initial camera position in flipped coordinate system
+        # In rendering: camera at origin, mesh at flipped position
+        # So in COLMAP world: camera at origin for azimuth=0, elev=0
+        initial_cam_pos = flip_x_180(np.zeros(3))  # Origin stays at origin after flip
         initial_offset = initial_cam_pos - world_center
         radius = np.linalg.norm(initial_offset)
 
         # Convert initial offset to spherical coordinates
-        # This gives us the base azimuth/elevation to preserve the initial view
-        # Note: negate X and Y to match the negated X and Y in forward conversion
+        # Note: in the flipped system, Y is inverted, so we adjust the elevation calculation
         base_azimuth = np.degrees(np.arctan2(-initial_offset[0], initial_offset[2]))
         base_elevation = np.degrees(np.arcsin(-initial_offset[1] / radius))
 
-        print(f"  initial_cam_pos: [{initial_cam_pos[0]:.4f}, {initial_cam_pos[1]:.4f}, {initial_cam_pos[2]:.4f}]")
-        print(f"  initial_offset (cam_pos - world_center): [{initial_offset[0]:.4f}, {initial_offset[1]:.4f}, {initial_offset[2]:.4f}]")
+        print(f"  initial_cam_pos (flipped): [{initial_cam_pos[0]:.4f}, {initial_cam_pos[1]:.4f}, {initial_cam_pos[2]:.4f}]")
+        print(f"  initial_offset: [{initial_offset[0]:.4f}, {initial_offset[1]:.4f}, {initial_offset[2]:.4f}]")
         print(f"  radius (orbit distance): {radius:.4f}")
         print(f"  base_azimuth: {base_azimuth:.2f}°, base_elevation: {base_elevation:.2f}°")
 
         for i, (azimuth, elev) in enumerate(zip(azimuth_angles, elevation_angles)):
-            # For orbiting camera around static mesh:
-            # - Camera orbits around the mesh bounding box center (world_center)
-            # - Camera uses spherical coordinates for smooth helical paths
-            # - Azimuth=0 preserves the initial camera position
-            # - Camera orientation uses lookAt to always face the mesh center
-
             # Compute actual spherical angles by adding to base angles
             actual_azimuth = base_azimuth + azimuth
             actual_elevation = base_elevation + elev
@@ -1478,11 +1485,7 @@ class OrbitRenderer:
             elev_rad = np.radians(actual_elevation)
 
             # Spherical to Cartesian conversion around world_center
-            # The mesh rotates in one direction, the camera must orbit in the opposite
-            # direction to maintain the same view. Both X and Y are negated.
-            # x = -r * cos(elevation) * sin(azimuth)  (negated: mesh rotates CCW around Y, camera CW)
-            # y = -r * sin(elevation)                  (negated: mesh rotates around X, camera opposite)
-            # z = r * cos(elevation) * cos(azimuth)
+            # In the flipped coordinate system (Y inverted)
             offset = np.array([
                 -radius * np.cos(elev_rad) * np.sin(azim_rad),
                 -radius * np.sin(elev_rad),
@@ -1491,38 +1494,30 @@ class OrbitRenderer:
             t_c2w = world_center + offset
 
             # Camera orientation: build lookAt matrix
-            # Camera looks toward mesh bounding box center with up = +Y
-            # This prevents camera roll/tumble as it orbits
-            #
-            # OpenGL convention: camera looks down -Z axis
-            # - Camera's +Z points backward (away from looking direction)
-            # - Camera's +Y points up
-            # - Camera's +X points right
-            center = world_center  # Look at mesh bounding box center
-            forward_dir = center - t_c2w  # Direction from camera toward center (-Z direction)
+            # Camera looks toward mesh bounding box center
+            # Use standard +Y up to match pyrender's OpenGL convention
+            # (pyrender camera has identity pose with +Y up)
+            center = world_center
+            forward_dir = center - t_c2w
             forward_dir = forward_dir / np.linalg.norm(forward_dir)
 
-            world_up = np.array([0, 1, 0])  # Y-up
+            # Standard OpenGL up direction - this ensures frame 0 has identity rotation
+            # when camera is at origin looking at -Z, which matches pyrender's rendering
+            world_up = np.array([0, 1, 0])
 
             # Right-handed coordinate system
-            # Handle gimbal lock when camera is at north/south pole (forward_dir || world_up)
             right = np.cross(forward_dir, world_up)
             right_norm = np.linalg.norm(right)
 
-            if right_norm < 1e-6:  # Camera at pole (looking straight up/down)
-                # Use an alternative up vector
-                world_up = np.array([0, 0, 1])  # Use Z as up reference instead
+            if right_norm < 1e-6:  # Camera at pole
+                world_up = np.array([0, 0, 1])  # Use +Z as up reference at poles
                 right = np.cross(forward_dir, world_up)
                 right_norm = np.linalg.norm(right)
 
             right = right / right_norm
-
-            # Recompute up vector to ensure orthogonality
             up = np.cross(right, forward_dir)
 
             # Build camera-to-world rotation matrix
-            # Columns are camera's local axes in world coordinates
-            # Camera's +Z is opposite of the looking direction
             R_c2w = np.column_stack([right, up, -forward_dir])
 
             # Build 4x4 matrices
@@ -1530,14 +1525,14 @@ class OrbitRenderer:
             c2w[:3, :3] = R_c2w
             c2w[:3, 3] = t_c2w
 
-            # w2c is inverse of c2w: w2c = [R^T | -R^T @ t]
+            # w2c is inverse of c2w
             R_w2c = R_c2w.T
             t_w2c = -R_c2w.T @ t_c2w
             w2c = np.eye(4)
             w2c[:3, :3] = R_w2c
             w2c[:3, 3] = t_w2c
 
-            # Convert rotation to quaternion (w, x, y, z)
+            # Convert rotation to quaternion
             quat = self._rotation_to_quaternion(R_c2w)
 
             # Generate frame filename using 1-based indexing
@@ -1555,69 +1550,21 @@ class OrbitRenderer:
                 "quaternion_wxyz": quat.tolist(),
             })
 
-        # === Apply 180° X flip to match renderer coordinate system ===
-        # The renderer applies a 180° X rotation to the mesh in vertices_to_trimesh(),
-        # which negates Y and Z coordinates. We must apply the same flip to the
-        # point cloud and camera poses for COLMAP to match the rendered images.
-        #
-        # R_x_180 = [[1, 0, 0], [0, -1, 0], [0, 0, -1]]
-        # This flips Y and Z coordinates.
-
-        def flip_x_180(v):
-            """Apply 180° X rotation (negate Y and Z)."""
-            result = v.copy()
-            result[..., 1] *= -1
-            result[..., 2] *= -1
-            return result
-
-        # Flip point cloud vertices to match rendered mesh position
-        flipped_vertices = flip_x_180(vertices + cam_t)
-
-        # Flip world center
-        flipped_world_center = flip_x_180(world_center)
-
-        # Flip camera positions and orientations in all frames
-        for frame in frames:
-            # Flip camera position
-            pos = np.array(frame["camera_position"])
-            flipped_pos = flip_x_180(pos)
-            frame["camera_position"] = flipped_pos.tolist()
-
-            # Flip camera orientation: R_flipped = R_x_180 @ R_c2w
-            # This transforms camera axes to the flipped world coordinate system
-            R_c2w = np.array(frame["camera_rotation"])
-            R_x_180 = np.diag([1.0, -1.0, -1.0])
-            R_flipped = R_x_180 @ R_c2w
-            frame["camera_rotation"] = R_flipped.tolist()
-
-            # Rebuild c2w and w2c matrices with flipped values
-            c2w = np.eye(4)
-            c2w[:3, :3] = R_flipped
-            c2w[:3, 3] = flipped_pos
-            frame["c2w"] = c2w.tolist()
-
-            # w2c is inverse of c2w
-            R_w2c = R_flipped.T
-            t_w2c = -R_flipped.T @ flipped_pos
-            w2c = np.eye(4)
-            w2c[:3, :3] = R_w2c
-            w2c[:3, 3] = t_w2c
-            frame["w2c"] = w2c.tolist()
-
-            # Recompute quaternion for flipped rotation
-            frame["quaternion_wxyz"] = self._rotation_to_quaternion(R_flipped).tolist()
-
-        print(f"\n[180° X FLIP APPLIED]")
-        print(f"  Point cloud center (flipped): [{flipped_vertices.mean(axis=0)[0]:.4f}, {flipped_vertices.mean(axis=0)[1]:.4f}, {flipped_vertices.mean(axis=0)[2]:.4f}]")
-        print(f"  World center (flipped): [{flipped_world_center[0]:.4f}, {flipped_world_center[1]:.4f}, {flipped_world_center[2]:.4f}]")
+        print(f"\n[COORDINATE SYSTEM: 180° X flipped to match renderer]")
+        print(f"  Point cloud center: [{flipped_vertices.mean(axis=0)[0]:.4f}, {flipped_vertices.mean(axis=0)[1]:.4f}, {flipped_vertices.mean(axis=0)[2]:.4f}]")
+        print(f"  World center (bbox): [{world_center[0]:.4f}, {world_center[1]:.4f}, {world_center[2]:.4f}]")
         if len(frames) > 0:
-            print(f"  Camera 0 position (flipped): {frames[0]['camera_position']}")
+            print(f"  Camera 0 position: {frames[0]['camera_position']}")
+            R0 = np.array(frames[0]['camera_rotation'])
+            print(f"  Camera 0 rotation (should be ~identity for frame 0):")
+            print(f"    [{R0[0,0]:.4f}, {R0[0,1]:.4f}, {R0[0,2]:.4f}]")
+            print(f"    [{R0[1,0]:.4f}, {R0[1,1]:.4f}, {R0[1,2]:.4f}]")
+            print(f"    [{R0[2,0]:.4f}, {R0[2,1]:.4f}, {R0[2,2]:.4f}]")
 
         return {
             "intrinsics": intrinsics,
             "frames": frames,
-            "world_centroid": flipped_world_center.tolist(),
-            # Point cloud with 180° X flip applied to match rendered mesh
+            "world_centroid": world_center.tolist(),
             "transformed_vertices": flipped_vertices,
         }
 
@@ -1699,27 +1646,26 @@ class OrbitRenderer:
             f.write("# IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
             f.write("# POINTS2D[] as (X, Y, POINT3D_ID)\n")
 
-            # Rotate cameras 180° around their local Y (up) axis to point inward
-            # The cameras are at correct positions but point outward; this flips them
-            rotate_y_180 = np.array([
-                [-1, 0,  0],
-                [ 0, 1,  0],
-                [ 0, 0, -1]
+            # Convert from OpenGL camera convention to OpenCV/COLMAP convention
+            # OpenGL: camera looks at -Z, +Y is up
+            # OpenCV: camera looks at +Z, -Y is up (Y down)
+            # The conversion is a 180° rotation around X axis (negates Y and Z)
+            opengl_to_opencv = np.array([
+                [1,  0,  0],
+                [0, -1,  0],
+                [0,  0, -1]
             ])
 
             for frame in frames:
                 image_id = frame["frame_id"] + 1
                 name = frame.get("frame_filename", f"frame_{frame['frame_id']:04d}.png")
 
-                # Get original c2w rotation and camera position
-                R_c2w = np.array(frame["camera_rotation"])
+                # Get c2w rotation and camera position (in OpenGL convention)
+                R_c2w_gl = np.array(frame["camera_rotation"])
                 camera_pos = np.array(frame["camera_position"])
 
-                # Rotate camera 180° around its up axis to flip from outward to inward
-                R_c2w_fixed = R_c2w @ rotate_y_180
-
-                # Compute w2c from the fixed c2w
-                R_w2c = R_c2w_fixed.T
+                # Convert to OpenCV convention: R_w2c_cv = opengl_to_opencv @ R_c2w_gl.T
+                R_w2c = opengl_to_opencv @ R_c2w_gl.T
                 t_w2c = -R_w2c @ camera_pos
 
                 quat_w2c = self._rotation_to_quaternion(R_w2c)
